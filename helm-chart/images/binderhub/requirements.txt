@@ -5,3 +5,7 @@ jupyterhub==0.9.4
 jsonschema==2.6.0
 # Logging sinks to send eventlogging events to
 google-cloud-logging==1.8.*
+# other binder deps from /requirements.txt
+escapism
+docker
+python-json-logger
