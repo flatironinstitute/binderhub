@@ -567,3 +567,6 @@ class CuratedRepoProvider(RepoProvider):
 
     def get_build_slug(self):
         return self.provider.get_build_slug()
+
+    def get_launch_options(self):
+        return self.params.get('options')
