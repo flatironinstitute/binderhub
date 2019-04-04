@@ -284,6 +284,8 @@ class BuildHandler(BaseHandler):
             else:
                 image_found = True
 
+        self.launch_options = provider.get_launch_options()
+
         # Launch a notebook server if the image already is built
         kube = self.settings['kubernetes_client']
 
@@ -494,7 +496,8 @@ class BuildHandler(BaseHandler):
                 server_name = ''
             try:
                 server_info = await launcher.launch(image=self.image_name, username=username,
-                                                    server_name=server_name, repo_url=self.repo_url)
+                                                    server_name=server_name, repo_url=self.repo_url,
+                                                    options=self.launch_options)
                 LAUNCH_TIME.labels(
                     status='success', retries=i,
                 ).observe(time.perf_counter() - launch_starttime)

@@ -103,6 +103,9 @@ class RepoProvider(LoggingConfigurable):
         """Return a unique build slug"""
         raise NotImplementedError("Must be overriden in the child class")
 
+    def get_launch_options(self):
+        return
+
     @staticmethod
     def sha1_validate(sha1):
         if not SHA1_PATTERN.match(sha1):

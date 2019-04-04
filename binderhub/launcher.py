@@ -117,7 +117,7 @@ class Launcher(LoggingConfigurable):
         # add a random suffix to avoid collisions for users on the same image
         return '{}-{}'.format(prefix, ''.join(random.choices(SUFFIX_CHARS, k=SUFFIX_LENGTH)))
 
-    async def launch(self, image, username, server_name='', repo_url=''):
+    async def launch(self, image, username, server_name='', repo_url='', options=None):
         """Launch a server for a given image
 
         - creates a temporary user on the Hub if authentication is not enabled
@@ -157,12 +157,14 @@ class Launcher(LoggingConfigurable):
         data = {'image': image,
                 'repo_url': repo_url,
                 'token': base64.urlsafe_b64encode(uuid.uuid4().bytes).decode('ascii').rstrip('=\n')}
+        if options:
+            data.update(options)
 
         # server name to be used in logs
         _server_name = " {}".format(server_name) if server_name else ''
 
         # start server
-        app_log.info("Starting server%s for user %s with image %s", _server_name, username, image)
+        app_log.info("Starting server%s for user %s with image %s options %s", _server_name, username, image, options)
         try:
             resp = await self.api_request(
                 'users/{}/servers/{}'.format(username, server_name),
