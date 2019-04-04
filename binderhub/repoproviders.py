@@ -536,37 +536,3 @@ class GistRepoProvider(GitHubRepoProvider):
 
     def get_build_slug(self):
         return self.gist_id
-
-class CuratedRepoProvider(RepoProvider):
-    """Curated meta-repo provider.
-
-    This provider requires a meta-repo that contains the specifications for other repositories.
-    Specs match the name of a file in this repository.
-    """
-
-    name = Unicode('Curated')
-
-    repos = Dict(
-        config=True,
-        help="""The meta configuration to use.""")
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        path = self.spec.split('/')
-        params = self.repos
-        for p in path:
-            params = params[p]
-        self.params = params
-        self.provider = params['provider'](config = self.config, **params)
-
-    def get_repo_url(self):
-        return self.provider.get_repo_url()
-
-    async def get_resolved_ref(self):
-        return await self.provider.get_resolved_ref()
-
-    def get_build_slug(self):
-        return self.provider.get_build_slug()
-
-    def get_launch_options(self):
-        return self.params.get('options')
