@@ -51,6 +51,7 @@ c.BinderHub.hub_url = os.environ['JUPYTERHUB_URL']
 c.BinderHub.image_prefix = os.environ['DOCKER_REGISTRY'] + '/binder-'
 c.BinderHub.use_registry = True
 c.BinderHub.build_namespace = 'binder'
+c.BinderHub.template_path = 'templates'
 c.BinderHub.repo_providers = {'fi': CuratedRepoProvider}
 c.CuratedRepoProvider.repos = {
     'triqstest': {
