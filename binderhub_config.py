@@ -1,4 +1,6 @@
 import os
+import string
+import escapism
 from traitlets import Dict, Unicode
 from binderhub.repoproviders import RepoProvider, GitHubRepoProvider
 
@@ -34,7 +36,15 @@ class CuratedRepoProvider(RepoProvider):
         return self.provider.get_build_slug()
 
     def get_launch_options(self):
-        return self.params.get('options')
+        safe_chars = set(string.ascii_letters + string.digits)
+        options = {'volumes': [], 'volume_mounts': []}
+        for mount, path in self.params.get('mounts', {}).items():
+            name = escapism.escape(mount, safe=safe_chars, escape_char='-')
+            if not mount.startswith('/'):
+                mount = '/home/jovyan/' + mount
+            options['volumes'].append({'name': name, 'hostPath': {'path': path, 'type': 'Directory'}})
+            options['volume_mounts'].append({'name': name, 'mountPath': mount, 'readOnly': True})
+        return options
 
 c.BinderHub.hub_api_token = os.environ['JUPYTERHUB_API_TOKEN']
 c.BinderHub.hub_url = os.environ['JUPYTERHUB_URL']
@@ -46,8 +56,8 @@ c.CuratedRepoProvider.repos = {
     'triqstest': {
         'provider': GitHubRepoProvider,
         'spec': 'TRIQS/binder/master',
-        'options': {
-            'singleuser_extra_labels': {'testlabel':'testtriqs'}
+        'mounts': {
+            'stuff': '/simons/scratch/dylan/gaea'
         }
     }
 }
