@@ -7,7 +7,7 @@ RUN apt-get update && \
     apt-get install --yes nodejs python3 python3-pip python3-wheel python3-setuptools
 
 WORKDIR /tmp/binderhub
-COPY README.rst MANIFEST.in package.json setup.py requirements.txt webpack.config.js ./
+COPY README.rst MANIFEST.in package.json setup.py requirements.txt webpack.config.js setup.cfg versioneer.py ./
 COPY binderhub binderhub
 RUN python3 setup.py bdist_wheel
 
