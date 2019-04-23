@@ -28,30 +28,34 @@ class LocalDirRepoProvider(RepoProvider):
         By default, none are allowed.  Set to ['/'] to allow all.
         """)
 
+    allowed_marker = Unicode(
+        config = True,
+        help="""
+        If set, a file by this name must exist in any used directory.
+        """)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         path = self.spec
         if not path.startswith('/'):
             path = '/' + path
         path = os.path.normpath(path)
-        if not any(path.startswith(a) for a in self.allowed_paths):
+        self.allowed_index = next(i for (i, p) in enumerate(self.allowed_paths) if path.startswith(p))
+        if not os.path.exists(os.path.join(path, self.allowed_marker)):
             raise ValueError('path not allowed')
         self.path = path
 
-    def get_mounts(self):
-        mounts = {}
-        for ent in os.scandir(self.path):
-            if ent.is_symlink() and ent.is_dir():
-                mounts[ent.name] = os.readlink(ent.path)
-        return mounts
-    
     def get_repo_url(self):
         return self.path
 
     def get_build_slug(self):
-        return self.path
+        return '{0}/{1}'.format(self.allowed_index, self.path[len(self.allowed_paths[self.allowed_index]):])
 
-    # TODO
+    async def get_resolved_ref(self):
+        s = os.lstat(self.path)
+        if not S_ISDIR(s.st_mode):
+            raise NotADirectoryError(self.path)
+        return format(s.st_ctime_ns, 'x')
 
 class CuratedRepoProvider(RepoProvider):
     """Curated meta-repo provider.
@@ -95,13 +99,7 @@ class CuratedRepoProvider(RepoProvider):
             spec = params['repo'] + '/' + params.get('branch', 'master')
         self.provider = provider(config = self.config, spec = spec)
 
-        try:
-            self.mounts = params['mounts']
-        except KeyError:
-            try:
-                self.mounts = self.provider.get_mounts()
-            except AttributeError:
-                self.mounts = {}
+        self.mounts = params.get('mounts', {})
         for (mount, path) in self.mounts.items():
             self.check_mount(path)
 
@@ -119,7 +117,10 @@ class CuratedRepoProvider(RepoProvider):
                     path = os.path.join(path, h)
                 else:
                     # treat as repo2docker dir
-                    params = {'spec': path, 'provider': 'dir'}
+                    params = {'spec': path, 'provider': 'dir', 'mounts': {}}
+                    for ent in os.scandir(path):
+                        if not ent.name.startswith('.') and ent.is_symlink() and ent.is_dir():
+                            params['mounts'][ent.name] = os.readlink(ent.path)
             else:
                 # load yaml file
                 with open(path) as f:
@@ -168,6 +169,7 @@ c.BinderHub.template_path = 'templates'
 c.BinderHub.repo_providers = {'fi': CuratedRepoProvider}
 c.CuratedRepoProvider.config_path = '/mnt/home/{0}/public_binder'
 c.LocalDirRepoProvider.allowed_paths = ['/mnt/home/']
+c.LocalDirRepoProvider.allowed_marker = '.public_binder'
 c.DockerRegistry.token_url = ''
 c.KubeSpawner.cpu_limit = 0.5
 c.KubeSpawner.mem_limit = '1G'

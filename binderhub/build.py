@@ -3,6 +3,7 @@ Contains build of a docker image from a git repository.
 """
 
 from collections import defaultdict
+import os
 import datetime
 import json
 import threading
@@ -60,13 +61,12 @@ class Build:
         """Get the cmd to run to build the image"""
         cmd = [
             'jupyter-repo2docker',
+            '--ref', self.ref,
             '--image', self.image_name,
             '--no-clean', '--no-run', '--json-logs',
             '--user-name', 'jovyan',
             '--user-id', '1000',
         ]
-        if self.ref:
-            cmd.extend(['--ref', self.ref])
         if self.appendix:
             cmd.extend(['--appendix', self.appendix])
 
@@ -166,6 +166,10 @@ class Build:
         env = []
         if self.git_credentials:
             env.append(client.V1EnvVar(name='GIT_CREDENTIAL_ENV', value=self.git_credentials))
+
+        if os.path.isabs(self.repo_url) and os.path.isdir(self.repo_url):
+            volumes.append(client.V1Volume(name='repo', host_path=client.V1HostPathVolumeSource(path=self.repo_url, type='Directory')))
+            volume_mounts.append(client.V1VolumeMount(name='repo', mount_path=self.repo_url, read_only=True))
 
         self.pod = client.V1Pod(
             metadata=client.V1ObjectMeta(
