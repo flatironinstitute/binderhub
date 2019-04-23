@@ -60,12 +60,13 @@ class Build:
         """Get the cmd to run to build the image"""
         cmd = [
             'jupyter-repo2docker',
-            '--ref', self.ref,
             '--image', self.image_name,
             '--no-clean', '--no-run', '--json-logs',
             '--user-name', 'jovyan',
             '--user-id', '1000',
         ]
+        if self.ref:
+            cmd.extend(['--ref', self.ref])
         if self.appendix:
             cmd.extend(['--appendix', self.appendix])
 
