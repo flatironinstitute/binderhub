@@ -29,7 +29,7 @@ from .build import Build
 from .builder import BuildHandler
 from .launcher import Launcher
 from .registry import DockerRegistry
-from .main import MainHandler, ParameterizedMainHandler, LegacyRedirectHandler
+from .main import MainHandler, ParameterizedMainHandler, LegacyRedirectHandler, UserRedirectHandler
 from .repoproviders import GitHubRepoProvider, GitRepoProvider, GitLabRepoProvider, GistRepoProvider
 from .metrics import MetricsHandler
 
@@ -523,6 +523,7 @@ class BinderHub(Application):
             (r"/build/([^/]+)/(.+)", BuildHandler),
             (r"/v2/([^/]+)/(.+)", ParameterizedMainHandler),
             (r"/repo/([^/]+)/([^/]+)(/.*)?", LegacyRedirectHandler),
+            (r'/~([^/]+/.*)', UserRedirectHandler),
             # for backward-compatible mybinder.org badge URLs
             # /assets/images/badge.svg
             (r'/assets/(images/badge\.svg)',

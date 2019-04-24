@@ -76,3 +76,11 @@ class LegacyRedirectHandler(BaseHandler):
         if urlpath is not None and urlpath.strip('/'):
             url = url_concat(url, dict(urlpath=urlpath))
         self.redirect(url)
+
+
+class UserRedirectHandler(BaseHandler):
+    """Redirect handler for tilde specs"""
+
+    @authenticated
+    def get(self, spec):
+        self.redirect('/v2/user/{spec}'.format(spec=spec))
