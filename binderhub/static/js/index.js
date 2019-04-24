@@ -69,6 +69,10 @@ function updateRepoText() {
     text = "Arbitrary git repository URL (http://git.example.com/repo)";
     tag_text = "Git commit SHA";
   }
+  else if (provider === "fi") {
+    text = "Flatiron user";
+    tag_text = "Project";
+  }
   $("#repository").attr('placeholder', text);
   $("label[for=repository]").text(text);
   $("#ref").attr('placeholder', tag_text);

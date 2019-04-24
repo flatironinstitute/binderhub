@@ -21,17 +21,23 @@ class ConsumingFormatter(string.Formatter):
             args.pop(key)
 
 class LocalDirRepoProvider(RepoProvider):
+    """Local host directory provider.
+
+    This provider just passes the given local host directory "repo" directly to repo2docker, mounted as a host_path volume.
+    """
+    name = Unicode('LocalDir')
+
     allowed_paths = List(
         config = True,
         help="""
-        Path prefixes that are allowed to be used.
+        Prefixes for paths that are allowed to be used as repos.
         By default, none are allowed.  Set to ['/'] to allow all.
         """)
 
-    allowed_marker = Unicode(
+    required_marker = Unicode(
         config = True,
         help="""
-        If set, a file by this name must exist in any used directory.
+        If set, a file by this name must exist in any "repo" directory.
         """)
 
     def __init__(self, *args, **kwargs):
@@ -41,7 +47,7 @@ class LocalDirRepoProvider(RepoProvider):
             path = '/' + path
         path = os.path.normpath(path)
         self.allowed_index = next(i for (i, p) in enumerate(self.allowed_paths) if path.startswith(p))
-        if not os.path.exists(os.path.join(path, self.allowed_marker)):
+        if not os.path.exists(os.path.join(path, self.required_marker)):
             raise ValueError('path not allowed')
         self.path = path
 
@@ -84,26 +90,19 @@ class CuratedRepoProvider(RepoProvider):
         config=True,
         help="""Repo Providers to register""")
 
+    allowed_mounts = List(
+        config = True,
+        help="""
+        Prefixes for paths that are allowed to be mounted.
+        By default, none are allowed.  Set to ['/'] to allow all.
+        """)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         safe_chars = frozenset(string.ascii_letters + string.digits + '-_/')
-        if set(self.spec) - safe_chars:
+        if not all(c in safe_chars for c in self.spec):
             raise ValueError('Invalid characters in spec')
-
-        params = self.load_params()
-        provider = self.providers[params.get('provider', 'gh')]
-        try:
-            spec = params['spec']
-        except KeyError:
-            spec = params['repo'] + '/' + params.get('branch', 'master')
-        self.provider = provider(config = self.config, spec = spec)
-
-        self.mounts = params.get('mounts', {})
-        for (mount, path) in self.mounts.items():
-            self.check_mount(path)
-
-    def load_params(self):
         spec = list(filter(None, self.spec.split('/')))
         path = ConsumingFormatter().vformat(self.config_path, spec, {})
 
@@ -120,7 +119,9 @@ class CuratedRepoProvider(RepoProvider):
                     params = {'spec': path, 'provider': 'dir', 'mounts': {}}
                     for ent in os.scandir(path):
                         if not ent.name.startswith('.') and ent.is_symlink() and ent.is_dir():
-                            params['mounts'][ent.name] = os.readlink(ent.path)
+                            targ = os.readlink(ent.path)
+                            if self.check_mount(targ, stat):
+                                params['mounts'][ent.name] = targ
             else:
                 # load yaml file
                 with open(path) as f:
@@ -128,18 +129,32 @@ class CuratedRepoProvider(RepoProvider):
                 for p in spec:
                     params = params[p]
                 if type(params) is not dict:
-                    raise TypeError()
-        self.stat = stat
-        self.params = params
-        return params
+                    raise TypeError(params)
 
-    def check_mount(self, path):
+        self.params = params
+
+        provider = self.providers[params.get('provider', 'gh')]
+        try:
+            spec = params['spec']
+        except KeyError:
+            spec = params['repo'] + '/' + params.get('branch', 'master')
+        self.provider = provider(config = self.config, spec = spec)
+
+        self.mounts = params.get('mounts', {})
+        for (mount, path) in self.mounts.items():
+            if not self.check_mount(path, stat):
+                raise PermissionError(path)
+
+    def check_mount(self, path, stat):
+        if not any(path.startswith(a) for a in self.allowed_mounts):
+            return False
         s = os.lstat(path)
         if not S_ISDIR(s.st_mode):
-            raise NotADirectoryError(path)
+            return False
         need = S_IROTH | S_IXOTH
-        if s.st_uid != self.stat.st_uid and s.st_gid != self.stat.st_gid or s.st_mode & need != need:
-            raise PermissionError(path)
+        if s.st_uid != stat.st_uid and s.st_gid != stat.st_gid or s.st_mode & need != need:
+            return False
+        return True
 
     def get_repo_url(self):
         return self.provider.get_repo_url()
@@ -168,8 +183,9 @@ c.BinderHub.build_namespace = 'binder'
 c.BinderHub.template_path = 'templates'
 c.BinderHub.repo_providers = {'fi': CuratedRepoProvider}
 c.CuratedRepoProvider.config_path = '/mnt/home/{0}/public_binder'
+c.CuratedRepoProvider.allowed_mounts = ['/mnt/home/', '/mnt/ceph/']
 c.LocalDirRepoProvider.allowed_paths = ['/mnt/home/']
-c.LocalDirRepoProvider.allowed_marker = '.public_binder'
+c.LocalDirRepoProvider.required_marker = '.public_binder'
 c.DockerRegistry.token_url = ''
 c.KubeSpawner.cpu_limit = 0.5
 c.KubeSpawner.mem_limit = '1G'
