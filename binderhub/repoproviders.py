@@ -687,7 +687,7 @@ class CuratedRepoProvider(RepoProvider):
                 raise PermissionError(path)
 
     def check_mount(self, path, stat):
-        if not any(path.startswith(a) for a in self.allowed_mounts):
+        if not (os.path.isabs(path) and any(path.startswith(a) for a in self.allowed_mounts)):
             return False
         s = os.lstat(path)
         if not S_ISDIR(s.st_mode):
