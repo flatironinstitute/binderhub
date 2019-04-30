@@ -171,12 +171,13 @@ class Build:
             volumes.append(client.V1Volume(name='repo', host_path=client.V1HostPathVolumeSource(path=self.repo_url, type='Directory')))
             volume_mounts.append(client.V1VolumeMount(name='repo', mount_path=self.repo_url, read_only=True))
 
+        component_label = "binderhub-build"
         self.pod = client.V1Pod(
             metadata=client.V1ObjectMeta(
                 name=self.name,
                 labels={
                     "name": self.name,
-                    "component": "binderhub-build",
+                    "component": component_label,
                 },
                 annotations={
                     "binder-repo": self.repo_url,
@@ -198,7 +199,24 @@ class Build:
                 ],
                 node_selector=self.node_selector,
                 volumes=volumes,
-                restart_policy="Never"
+                restart_policy="Never",
+                affinity=client.V1Affinity(
+                    pod_anti_affinity=client.V1PodAntiAffinity(
+                        preferred_during_scheduling_ignored_during_execution=[
+                            client.V1WeightedPodAffinityTerm(
+                                weight=100,
+                                pod_affinity_term=client.V1PodAffinityTerm(
+                                    topology_key="kubernetes.io/hostname",
+                                    label_selector=client.V1LabelSelector(
+                                        match_labels=dict(
+                                            component=component_label
+                                        )
+                                    )
+                                )
+                            )
+                        ]
+                    )
+                )
             )
         )
 
