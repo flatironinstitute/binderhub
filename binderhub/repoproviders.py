@@ -23,7 +23,7 @@ from tornado import gen
 from tornado.httpclient import AsyncHTTPClient, HTTPError, HTTPRequest
 from tornado.httputil import url_concat
 
-from traitlets import Dict, Unicode, Bool, default, List, observe
+from traitlets import Bool, Dict, List, Set, Unicode, default, observe
 from traitlets.config import LoggingConfigurable
 
 from kubernetes import client
@@ -631,11 +631,23 @@ class CuratedRepoProvider(RepoProvider):
         config=True,
         help="""Repo Providers to register""")
 
-    allowed_mounts = List(
+    allowed_mounts = Set(
         config = True,
         help="""
         Prefixes for paths that are allowed to be mounted.
         By default, none are allowed.  Set to ['/'] to allow all.
+        """)
+
+    default_options = Dict(
+        config = True,
+        help="""
+        Default launch options to pass to the spawner.
+        """)
+
+    allowed_options = Set(
+        config = True,
+        help="""
+        Launch options that may be overridden by the configuration yaml.
         """)
 
     def __init__(self, *args, **kwargs):
@@ -708,11 +720,17 @@ class CuratedRepoProvider(RepoProvider):
 
     def get_launch_options(self):
         options = {'volumes': [], 'volume_mounts': []}
+        options.update(self.default_options)
         for idx, (mount, path) in enumerate(self.mounts.items(), 1):
             name = 'mount%d'%idx
             if not mount.startswith('/'):
                 mount = '/home/jovyan/' + mount
             options['volumes'].append(client.V1Volume(name=name, host_path=client.V1HostPathVolumeSource(path=path, type='Directory')).to_dict())
             options['volume_mounts'].append(client.V1VolumeMount(name=name, mount_path=mount, read_only=True).to_dict())
+        for k in self.allowed_options:
+            try:
+                options[k] = self.params[k]
+            except KeyError:
+                pass
         return options
 
