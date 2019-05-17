@@ -9,6 +9,7 @@ import os
 import re
 from glob import glob
 from urllib.parse import urlparse
+import ipaddress
 
 import kubernetes.client
 import kubernetes.config
@@ -20,7 +21,7 @@ import tornado.options
 import tornado.log
 from tornado.log import app_log
 import tornado.web
-from traitlets import Unicode, Integer, Bool, Dict, validate, TraitError, default
+from traitlets import Unicode, Integer, Bool, Dict, Set, validate, TraitError, default
 from traitlets.config import Application
 from jupyterhub.services.auth import HubOAuthCallbackHandler
 
@@ -402,6 +403,11 @@ class BinderHub(Application):
         config=True,
     )
 
+    allowed_metrics_ips = Set(
+        help='List of IPs or networks allowed to GET /metrics. Defaults to all.',
+        config=True
+    )
+
     @staticmethod
     def add_url_prefix(prefix, handlers):
         """add a url prefix to handlers"""
@@ -512,7 +518,8 @@ class BinderHub(Application):
             'executor': self.executor,
             'auth_enabled': self.auth_enabled,
             'use_named_servers': self.use_named_servers,
-            'event_log': self.event_log
+            'event_log': self.event_log,
+            'allowed_metrics_ips': set(map(ipaddress.ip_network, self.allowed_metrics_ips))
         })
         if self.auth_enabled:
             self.tornado_settings['cookie_secret'] = os.urandom(32)
