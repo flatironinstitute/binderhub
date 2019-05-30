@@ -3,8 +3,14 @@ from binderhub.repoproviders import CuratedRepoProvider
 
 c.BinderHub.hub_api_token = os.environ['JUPYTERHUB_API_TOKEN']
 c.BinderHub.hub_url = os.environ['JUPYTERHUB_URL']
-c.BinderHub.image_prefix = os.environ['DOCKER_REGISTRY'] + '/binder-'
-c.BinderHub.use_registry = True
+registry = os.environ.get('DOCKER_REGISTRY')
+if registry:
+    c.BinderHub.image_prefix = registry + '/binder-'
+    c.BinderHub.use_registry = True
+    c.DockerRegistry.token_url = ''
+else:
+    c.BinderHub.image_prefix = 'binder-'
+    c.BinderHub.use_registry = False
 c.BinderHub.build_namespace = 'binder'
 c.BinderHub.template_path = 'templates'
 c.BinderHub.allowed_metrics_ips = ['10.0.0.0/8', '172.17.0.1']
@@ -18,5 +24,4 @@ c.CuratedRepoProvider.default_options = {
 c.CuratedRepoProvider.allowed_options = []
 c.LocalDirRepoProvider.allowed_paths = ['/mnt/home/']
 c.LocalDirRepoProvider.required_marker = '.public_binder'
-c.DockerRegistry.token_url = ''
 c.BinderHub.per_repo_quota = 4

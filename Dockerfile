@@ -17,8 +17,8 @@ WORKDIR /home
 EXPOSE 8585
 CMD ["python3", "-m", "binderhub"]
 
-COPY local/ca.crt /usr/local/share/ca-certificates/k8s-cluster.crt
-RUN update-ca-certificates
+#COPY local/ca.crt /usr/local/share/ca-certificates/k8s-cluster.crt
+#RUN update-ca-certificates
 
 COPY helm-chart/images/binderhub/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
