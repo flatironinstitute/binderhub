@@ -10,7 +10,7 @@ Note: When adding a new repo provider, add it to the allowed values for
 from datetime import timedelta
 import json
 import os
-from stat import S_ISDIR, S_IROTH, S_IXOTH
+from stat import S_ISDIR, S_ISREG, S_IROTH, S_IXOTH
 import time
 import urllib.parse
 import re
@@ -551,15 +551,20 @@ class GistRepoProvider(GitHubRepoProvider):
 # A (v)formatter that removes used keys from its arguments
 class ConsumingFormatter(string.Formatter):
     def check_unused_args(self, used_args, args, kwargs):
-        ints = []
+        ints = set()
         for key in used_args:
             if isinstance(key, int):
-                ints.append(key)
+                ints.add(key)
             else:
-                del kwargs[key]
-        ints.sort(reverse=True)
-        for key in ints:
-            args.pop(key)
+                try:
+                    del kwargs[key]
+                except KeyError:
+                    pass
+        for key in sorted(ints, reverse=True):
+            try:
+                args.pop(key)
+            except IndexError:
+                pass
 
 class LocalDirRepoProvider(RepoProvider):
     """Local host directory provider.
@@ -602,7 +607,9 @@ class LocalDirRepoProvider(RepoProvider):
         s = os.lstat(self.path)
         if not S_ISDIR(s.st_mode):
             raise NotADirectoryError(self.path)
-        return format(s.st_ctime_ns, 'x')
+        m = os.stat(os.path.join(self.path, self.required_marker))
+        # ctime should really be recursive somehow...
+        return format(max(s.st_ctime_ns, m.st_ctime_ns), 'x')
 
 class CuratedRepoProvider(RepoProvider):
     """Curated meta-repo provider.
@@ -619,6 +626,12 @@ class CuratedRepoProvider(RepoProvider):
         Path to the configuration.
         {N} is expanded to the Nth component of the repo specification.
         Remaining unused components are then looked up in the indicated directory or yaml file.""")
+
+    dir_config = Unicode(
+        config=True,
+        help="""
+        If set, a directory containing this yaml config file (or empty) may be used as LocalDirRepoProvider repo2docker directory.
+        """)
 
     providers = Dict(#BinderHub.repo_providers.default_value,
         {
@@ -659,33 +672,38 @@ class CuratedRepoProvider(RepoProvider):
         spec = list(filter(None, self.spec.split('/')))
         path = ConsumingFormatter().vformat(self.config_path, spec, {})
 
-        params = None
-        while params is None:
+        while True:
             stat = os.lstat(path)
             if S_ISDIR(stat.st_mode):
                 if spec:
                     # recurse into directory
                     h = spec.pop(0)
                     path = os.path.join(path, h)
-                else:
+                    continue
+                elif self.dir_config:
                     # treat as repo2docker dir
-                    params = {'spec': path, 'provider': 'dir', 'mounts': {}}
-                    for ent in os.scandir(path):
-                        if not ent.name.startswith('.') and ent.is_symlink() and ent.is_dir():
-                            targ = os.readlink(ent.path)
-                            if self.check_mount(targ, stat):
-                                params['mounts'][ent.name] = targ
-            else:
+                    with open(os.path.join(path, self.dir_config)) as f:
+                        params = yaml.safe_load(f)
+                    if params is None:
+                        params = {}
+                    params.setdefault('provider', 'dir')
+                    params.setdefault('spec', path)
+                    if 'mounts' not in params:
+                        params['mounts'] = {}
+                        for ent in os.scandir(path):
+                            if not ent.name.startswith('.') and ent.is_symlink() and ent.is_dir():
+                                targ = os.readlink(ent.path)
+                                if self.check_mount(targ, stat):
+                                    params['mounts'][ent.name] = targ
+            elif S_ISREG(stat.st_mode):
                 # load yaml file
                 with open(path) as f:
                     params = yaml.safe_load(f)
                 for p in spec:
                     params = params[p]
-                if type(params) is not dict:
-                    raise TypeError(params)
+            break
 
         self.params = params
-
         provider = self.providers[params.get('provider', 'gh')]
         try:
             spec = params['spec']
