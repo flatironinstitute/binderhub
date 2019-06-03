@@ -124,12 +124,23 @@ class BinderHub(Application):
         '/',
         help="The base URL of the entire application",
         config=True)
-
     @validate('base_url')
     def _valid_base_url(self, proposal):
         if not proposal.value.startswith('/'):
             proposal.value = '/' + proposal.value
         if not proposal.value.endswith('/'):
+            proposal.value = proposal.value + '/'
+        return proposal.value
+
+    badge_base_url = Unicode(
+        '',
+        help="Base URL to use when generating launch badges",
+        config=True
+    )
+    @validate('badge_base_url')
+    def _valid_badge_base_url(self, proposal):
+        # add a trailing slash only when a value is set
+        if proposal.value and not proposal.value.endswith('/'):
             proposal.value = proposal.value + '/'
         return proposal.value
 
@@ -512,6 +523,7 @@ class BinderHub(Application):
             'build_memory_limit': self.build_memory_limit,
             'build_docker_host': self.build_docker_host,
             'base_url': self.base_url,
+            'badge_base_url': self.badge_base_url,
             "static_path": os.path.join(HERE, "static"),
             'static_url_prefix': url_path_join(self.base_url, 'static/'),
             'template_variables': self.template_variables,
