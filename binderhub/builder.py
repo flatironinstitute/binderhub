@@ -237,6 +237,10 @@ class BuildHandler(BaseHandler):
             })
             return
 
+        if not provider.check_hub_user(self.hub_auth.get_user(self)):
+            await self.fail("Access denied to %s.  Please check with the maintainer." % (key))
+            return
+
         repo_url = self.repo_url = provider.get_repo_url()
 
         # labels to apply to build/launch metrics

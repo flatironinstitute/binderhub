@@ -111,6 +111,9 @@ class RepoProvider(LoggingConfigurable):
     def get_launch_options(self):
         return
 
+    def check_hub_user(self, user):
+        return True
+
     @staticmethod
     def sha1_validate(sha1):
         if not SHA1_PATTERN.match(sha1):
@@ -752,3 +755,10 @@ class CuratedRepoProvider(RepoProvider):
                 pass
         return options
 
+    def check_hub_user(self, user):
+        users = self.params.get('users')
+        if type(users) is str:
+            users = users.split()
+        if users and not user['name'] in users:
+            return False
+        return super().check_hub_user(user)
