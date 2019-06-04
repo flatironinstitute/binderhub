@@ -673,6 +673,7 @@ class CuratedRepoProvider(RepoProvider):
         if not all(c in safe_chars for c in self.spec):
             raise ValueError('Invalid characters in spec')
         spec = list(filter(None, self.spec.split('/')))
+        self.specuser = spec[0]
         path = ConsumingFormatter().vformat(self.config_path, spec, {})
 
         try:
@@ -750,7 +751,9 @@ class CuratedRepoProvider(RepoProvider):
         return self.provider.get_build_slug()
 
     def get_launch_options(self):
-        options = {'volumes': [], 'volume_mounts': []}
+        options = {'volumes': [], 'volume_mounts': [],
+                'extra_labels': {'specuser': self.specuser}
+            }
         options.update(self.default_options)
         for idx, (mount, path) in enumerate(self.mounts.items(), 1):
             name = 'mount%d'%idx

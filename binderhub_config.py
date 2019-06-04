@@ -27,5 +27,5 @@ c.CuratedRepoProvider.default_options = {
     'cpu_limit': 1,
     'mem_limit': '1G'
 }
-c.CuratedRepoProvider.allowed_options = []
+c.CuratedRepoProvider.allowed_options = ['cpu_limit','mem_limit']
 c.BinderHub.per_repo_quota = 4
