@@ -186,7 +186,7 @@ class Launcher(LoggingConfigurable):
                     # and tune this appropriately
                     await gen.sleep(min(1.4 ** i, 10))
                 else:
-                    raise web.HTTPError(500, "Image %s for user %s took too long to launch" % (image, username))
+                    raise web.HTTPError(500, "Image %s for user %s took too long to launch. Sufficient resources may not currently be available." % (image, username))
 
         except HTTPError as e:
             if e.response:

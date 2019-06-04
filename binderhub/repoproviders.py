@@ -675,7 +675,8 @@ class CuratedRepoProvider(RepoProvider):
         spec = list(filter(None, self.spec.split('/')))
         path = ConsumingFormatter().vformat(self.config_path, spec, {})
 
-        while True:
+        try:
+          while True:
             stat = os.lstat(path)
             if S_ISDIR(stat.st_mode):
                 if spec:
@@ -705,6 +706,11 @@ class CuratedRepoProvider(RepoProvider):
                 for p in spec:
                     params = params[p]
             break
+        except OSError as e:
+            self.log.info("Looking up %s: %s", self.spec, e)
+            self.params = {}
+            self.provider = None
+            return
 
         self.params = params
         provider = self.providers[params.get('provider', 'gh')]
@@ -731,9 +737,13 @@ class CuratedRepoProvider(RepoProvider):
         return True
 
     def get_repo_url(self):
+        if not self.provider:
+            return None
         return self.provider.get_repo_url()
 
     async def get_resolved_ref(self):
+        if not self.provider:
+            return None
         return await self.provider.get_resolved_ref()
 
     def get_build_slug(self):

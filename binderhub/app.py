@@ -530,6 +530,7 @@ class BinderHub(Application):
             'executor': self.executor,
             'auth_enabled': self.auth_enabled,
             'use_named_servers': self.use_named_servers,
+            'hub_url': self.hub_url,
             'event_log': self.event_log,
             'allowed_metrics_ips': set(map(ipaddress.ip_network, self.allowed_metrics_ips))
         })
