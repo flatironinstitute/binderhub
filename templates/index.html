@@ -4,7 +4,7 @@
 <div id="main" class="container">
   <div class="row">
     <h4 class="text-center logo-subtext">Flatiron Institute</h4>
-    <div class="col-lg-10 col-lg-offset-1">
+    <div class="col-lg-10">
 
       {% block form %}
       <form id="build-form" class="form jumbotron">
@@ -85,8 +85,13 @@
       </form>
       {% endblock form %}
     </div>
-    <div class="col-md-1">
-      <a href="{{hub_url}}">Check your currently running server.</a>
+    <div class="col-md-2">
+      <p>
+	Check your <a href="{{hub_url}}">currently running server</a>.
+      </p>
+      <p>
+	<a href="https://docs.simonsfoundation.org/index.php/PublicBinder">Internal documentation</a> for Flatiron users.
+      </p>
     </div>
   </div>
 </div>
