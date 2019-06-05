@@ -3,9 +3,8 @@ from binderhub.repoproviders import CuratedRepoProvider
 
 c.BinderHub.auth_enabled = 'JUPYTERHUB_OAUTH_CALLBACK_URL' in os.environ
 c.BinderHub.hub_api_token = os.environ['JUPYTERHUB_API_TOKEN']
-hub_host = os.environ['JUPYTERHUB_HOST']
-c.BinderHub.hub_url = hub_host + '/'
-c.HubOAuth.hub_host = hub_host
+c.BinderHub.hub_url = os.environ['JUPYTERHUB_URL']
+c.HubOAuth.hub_host = os.environ['JUPYTERHUB_HOST']
 registry = os.environ.get('DOCKER_REGISTRY')
 if registry:
     c.BinderHub.image_prefix = registry + '/binder-'
