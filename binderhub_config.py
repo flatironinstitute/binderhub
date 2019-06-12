@@ -24,7 +24,7 @@ c.LocalDirRepoProvider.allowed_paths = ['/mnt/home/']
 c.CuratedRepoProvider.allowed_mounts = ['/mnt/home/', '/mnt/ceph/']
 c.CuratedRepoProvider.default_options = {
     'cpu_limit': 1,
-    'mem_limit': '1G'
+    'mem_limit': '10G'
 }
 c.CuratedRepoProvider.allowed_options = ['cpu_limit','mem_limit']
 c.BinderHub.per_repo_quota = 4
