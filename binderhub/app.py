@@ -512,6 +512,7 @@ class BinderHub(Application):
             "push_secret": self.push_secret,
             "image_prefix": self.image_prefix,
             "debug": self.debug,
+            'hub_url': self.hub_url,
             'launcher': self.launcher,
             'appendix': self.appendix,
             "build_namespace": self.build_namespace,
