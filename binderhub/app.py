@@ -31,7 +31,9 @@ from .builder import BuildHandler
 from .launcher import Launcher
 from .registry import DockerRegistry
 from .main import MainHandler, ParameterizedMainHandler, LegacyRedirectHandler, UserRedirectHandler
-from .repoproviders import GitHubRepoProvider, GitRepoProvider, GitLabRepoProvider, GistRepoProvider
+from .repoproviders import (GitHubRepoProvider, GitRepoProvider,
+                            GitLabRepoProvider, GistRepoProvider,
+                            ZenodoProvider)
 from .metrics import MetricsHandler
 
 from .utils import ByteSpecification, url_path_join
@@ -333,6 +335,7 @@ class BinderHub(Application):
             'gist': GistRepoProvider,
             'git': GitRepoProvider,
             'gl': GitLabRepoProvider,
+            'zenodo': ZenodoProvider,
         },
         config=True,
         help="""
@@ -412,6 +415,12 @@ class BinderHub(Application):
         '/extra_static/',
         help='Url prefix to serve extra static files.',
         config=True,
+    )
+
+    normalized_origin = Unicode(
+        '',
+        config=True,
+        help='Origin to use when emitting events. Defaults to hostname of request when empty'
     )
 
     allowed_metrics_ips = Set(
@@ -530,8 +539,8 @@ class BinderHub(Application):
             'executor': self.executor,
             'auth_enabled': self.auth_enabled,
             'use_named_servers': self.use_named_servers,
-            'hub_url': self.hub_url,
             'event_log': self.event_log,
+            'normalized_origin': self.normalized_origin,
             'allowed_metrics_ips': set(map(ipaddress.ip_network, self.allowed_metrics_ips))
         })
         if self.auth_enabled:
