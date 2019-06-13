@@ -11,7 +11,7 @@ import escapism
 
 import docker
 from tornado.concurrent import chain_future, Future
-from tornado import gen
+from tornado import web, gen
 from tornado.web import Finish, authenticated
 from tornado.queues import Queue
 from tornado.iostream import StreamClosedError
@@ -512,6 +512,8 @@ class BuildHandler(BaseHandler):
                 ).inc()
 
             except Exception as e:
+                if isinstance(e, web.HTTPError) and e.status_code == 409:
+                    raise
                 if i + 1 == launcher.retries:
                     status = 'failure'
                 else:
