@@ -678,6 +678,14 @@ class CuratedRepoProvider(RepoProvider):
         By default, none are allowed.  Set to ['/'] to allow all.
         """)
 
+    user_mount = Unicode(
+        config=True,
+        help="""
+        Default container path in which to to mount per-user persistent volume.
+        Set to empty to disable mount.  Overridden by config.
+        To use this, set jupyterhub.singleuser.storage.dynamic.volumeNameTemplate to 'user-mount'.
+        """)
+
     default_options = Dict(
         config = True,
         help="""
@@ -774,6 +782,11 @@ class CuratedRepoProvider(RepoProvider):
     def get_build_slug(self):
         return self.provider.get_build_slug()
 
+    def mount_path(self, path):
+        if not path.startswith('/'):
+            path = '/home/jovyan/' + path
+        return path
+
     def get_launch_options(self):
         options = {'volumes': [], 'volume_mounts': [],
                 'extra_labels': {'specuser': self.specuser}
@@ -781,10 +794,11 @@ class CuratedRepoProvider(RepoProvider):
         options.update(self.default_options)
         for idx, (mount, path) in enumerate(self.mounts.items(), 1):
             name = 'mount%d'%idx
-            if not mount.startswith('/'):
-                mount = '/home/jovyan/' + mount
             options['volumes'].append(client.V1Volume(name=name, host_path=client.V1HostPathVolumeSource(path=path, type='Directory')).to_dict())
-            options['volume_mounts'].append(client.V1VolumeMount(name=name, mount_path=mount, read_only=True).to_dict())
+            options['volume_mounts'].append(client.V1VolumeMount(name=name, mount_path=self.mount_path(mount), read_only=True).to_dict())
+        user_mount = self.params.get('user_mount', self.user_mount)
+        if user_mount:
+            options['volume_mounts'].append(client.V1VolumeMount(name='user-mount', mount_path=self.mount_path(user_mount)).to_dict())
         for k in self.allowed_options:
             try:
                 options[k] = self.params[k]
