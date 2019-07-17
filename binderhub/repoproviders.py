@@ -857,15 +857,12 @@ class CuratedRepoProvider(RepoProvider):
         return path
 
     def check_limit(self, opts, lim, typ, maximum):
-        convert = {
-            'cpu': float,
-            'mem': lambda v: ByteSpecification.validate(ByteSpecification, None, v)
-        }
         try:
             val = opts[lim+'_'+typ]
         except KeyError:
             return
-        val = convert[lim](val)
+        if lim == 'mem':
+            val = ByteSpecification.validate(ByteSpecification, None, val)
         if not (0 < val <= maximum):
             raise ValueError('Invalid %s limit'%(lim))
         return val
