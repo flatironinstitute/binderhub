@@ -113,3 +113,5 @@ helm-chart/travis-binder.yaml
 
 # Federation data page
 doc/federation/data-federation.txt
+
+helm-chart/binderhub/requirements.lock
