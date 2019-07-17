@@ -289,7 +289,11 @@ class BuildHandler(BaseHandler):
             else:
                 image_found = True
 
-        self.launch_options = provider.get_launch_options()
+        try:
+            self.launch_options = provider.get_launch_options()
+        except Exception as e:
+            await self.fail("Error in launch options for %s: %s" % (key, e))
+            return
 
         # Launch a notebook server if the image already is built
         kube = self.settings['kubernetes_client']

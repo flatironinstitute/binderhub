@@ -22,5 +22,11 @@ c.CuratedRepoProvider.dir_config = '.public_binder'
 c.LocalDirRepoProvider.required_marker = '.public_binder'
 c.LocalDirRepoProvider.allowed_paths = ['/mnt/home/']
 c.CuratedRepoProvider.allowed_mounts = ['/mnt/home/', '/mnt/ceph/']
-c.CuratedRepoProvider.allowed_options = ['cpu_limit','mem_limit']
+c.CuratedRepoProvider.default_options = {
+    'cpu_guarantee': 1,
+    'cpu_limit': 2,
+    'mem_guarantee': '10G',
+    'mem_limit': '20G',
+}
+c.CuratedRepoProvider.allowed_options = list(c.CuratedRepoProvider.default_options.keys())
 c.CuratedRepoProvider.user_mount = 'home'
