@@ -898,6 +898,8 @@ class CuratedRepoProvider(RepoProvider):
         return options
 
     def check_hub_user(self, user):
+        if user['admin']:
+            return True
         users = self.params.get('users')
         if type(users) is str:
             users = users.split()
