@@ -12,6 +12,7 @@ SPEC_NAMES = {
     "gist": "Gist",
     "gl": "GitLab",
     "git": "Git repo",
+    "user": "Local user environment",
     "zenodo": "Zenodo"
 }
 
