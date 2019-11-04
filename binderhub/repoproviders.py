@@ -864,6 +864,12 @@ class LocalDirRepoProvider(RepoProvider):
         # ctime should really be recursive somehow...
         return format(max(s.st_ctime_ns, m.st_ctime_ns), 'x')
 
+    async def get_resolved_spec(self):
+        return self.path
+
+    async def get_resolved_ref_url(self):
+        return self.path
+
 class CuratedRepoProvider(RepoProvider):
     """Curated meta-repo provider.
 
@@ -1004,6 +1010,16 @@ class CuratedRepoProvider(RepoProvider):
         if not self.provider:
             return None
         return await self.provider.get_resolved_ref()
+
+    async def get_resolved_spec(self):
+        if not self.provider:
+            return None
+        return await self.provider.get_resolved_spec()
+
+    async def get_resolved_ref_url(self):
+        if not self.provider:
+            return None
+        return await self.provider.get_resolved_ref_url()
 
     def get_build_slug(self):
         return self.provider.get_build_slug()
