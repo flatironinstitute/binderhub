@@ -323,6 +323,7 @@ class BuildHandler(BaseHandler):
             push_secret = None
 
         BuildClass = FakeBuild if self.settings.get('fake_build') else Build
+
         binder_url = '{proto}://{host}{base_url}v2/{provider}/{spec}'.format(
             proto=self.request.protocol,
             host=self.request.host,
@@ -330,9 +331,20 @@ class BuildHandler(BaseHandler):
             provider=provider_prefix,
             spec=spec,
         )
+        resolved_spec = await provider.get_resolved_spec()
+        persistent_binder_url = '{proto}://{host}{base_url}v2/{provider}/{spec}'.format(
+            proto=self.request.protocol,
+            host=self.request.host,
+            base_url=self.settings['base_url'],
+            provider=provider_prefix,
+            spec=resolved_spec,
+        )
+        ref_url = await provider.get_resolved_ref_url()
         appendix = self.settings['appendix'].format(
             binder_url=binder_url,
             repo_url=repo_url,
+            persistent_binder_url=persistent_binder_url,
+            ref_url=ref_url,
         )
 
         self.build = build = BuildClass(
@@ -350,7 +362,8 @@ class BuildHandler(BaseHandler):
             node_selector=self.settings['build_node_selector'],
             appendix=appendix,
             log_tail_lines=self.settings['log_tail_lines'],
-            git_credentials=provider.git_credentials
+            git_credentials=provider.git_credentials,
+            sticky_builds=self.settings['sticky_builds'],
         )
 
         with BUILDS_INPROGRESS.track_inprogress():

@@ -11,5 +11,5 @@ class MetricsHandler(BaseHandler):
             ip = ipaddress.ip_address(self.request.remote_ip)
             if not any(ip in a for a in allowed):
                 raise web.HTTPError(403)
-        self.set_header('Content-Type', CONTENT_TYPE_LATEST)
+        self.set_header("Content-Type", CONTENT_TYPE_LATEST)
         self.write(generate_latest(REGISTRY))

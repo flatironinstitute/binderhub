@@ -1,6 +1,9 @@
 """
 Main handler classes for requests
 """
+import urllib.parse
+
+from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 from tornado.web import HTTPError, authenticated
 from tornado.httputil import url_concat
 from tornado.log import app_log
@@ -12,9 +15,11 @@ SPEC_NAMES = {
     "gist": "Gist",
     "gl": "GitLab",
     "git": "Git repo",
-    "user": "Local user environment",
-    "zenodo": "Zenodo"
+    "zenodo": "Zenodo",
+    "figshare": "Figshare",
+    "user": "Local user environment"
 }
+
 
 class MainHandler(BaseHandler):
     """Main handler for requests"""
@@ -37,7 +42,7 @@ class ParameterizedMainHandler(BaseHandler):
     """Main handler that allows different parameter settings"""
 
     @authenticated
-    def get(self, provider_prefix, _unescaped_spec):
+    async def get(self, provider_prefix, _unescaped_spec):
         prefix = '/v2/' + provider_prefix
         spec = self.get_spec_from_request(prefix)
         spec = spec.rstrip("/")
@@ -63,14 +68,30 @@ class ParameterizedMainHandler(BaseHandler):
             org, repo_name, ref = spec.split('/', 2)
             # NOTE: tornado unquotes query arguments too -> notebooks%2Findex.ipynb becomes notebooks/index.ipynb
             filepath = self.get_argument('filepath', '').lstrip('/')
-           
+
             # Check if we have a JupyterLab + file path, if so then use it for the filepath
             urlpath = self.get_argument('urlpath', '').lstrip('/')
             if urlpath.startswith("lab") and "/tree/" in urlpath:
                 filepath = urlpath.split('tree/', 1)[-1]
-            
+
             blob_or_tree = 'blob' if filepath else 'tree'
             nbviewer_url = f'{nbviewer_url}/{org}/{repo_name}/{blob_or_tree}/{ref}/{filepath}'
+
+            # Check if the nbviewer URL is valid and would display something
+            # useful to the reader, if not we don't show it
+            client = AsyncHTTPClient()
+            # quote any unicode characters in the URL
+            proto, rest = nbviewer_url.split("://")
+            rest = urllib.parse.quote(rest)
+
+            request = HTTPRequest(proto + "://" + rest,
+                                  method="HEAD",
+                                  user_agent="BinderHub",
+                                  )
+            response = await client.fetch(request, raise_error=False)
+            if response.code >= 400:
+                nbviewer_url = None
+
         self.render_template(
             "loading.html",
             base_url=self.settings['base_url'],
