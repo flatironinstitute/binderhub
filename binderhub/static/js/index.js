@@ -102,6 +102,7 @@ function updateRepoText() {
   else if (provider === "user") {
     text = "User";
     tag_text = "Project";
+    placeholder = "project";
   }
   $("#repository").attr('placeholder', text);
   $("label[for=repository]").text(text);

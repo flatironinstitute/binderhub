@@ -210,7 +210,7 @@ class Launcher(LoggingConfigurable):
         _server_name = " {}".format(server_name) if server_name else ''
 
         # start server
-        app_log.info("Starting server%s for user %s with image %s options %s", _server_name, username, image, options)
+        app_log.info("Starting server%s for user %s with image %s extra_args %s", _server_name, username, image, extra_args)
         try:
             resp = await self.api_request(
                 'users/{}/servers/{}'.format(username, server_name),
