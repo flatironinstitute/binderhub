@@ -48,7 +48,8 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'autodoc_traits',
-    'sphinx_copybutton'
+    'sphinx_copybutton',
+    'myst_parser',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -57,12 +58,6 @@ templates_path = ['_templates']
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 source_suffix = ['.rst', '.md']
-
-# Support markdown via recommonmark:
-from recommonmark.parser import CommonMarkParser
-source_parsers = {
-    '.md': CommonMarkParser,
-}
 
 # The master toctree document.
 master_doc = 'index'
@@ -105,16 +100,18 @@ todo_include_todos = False
 
 # -- Options for HTML output ----------------------------------------------
 
-# The theme to use for HTML and HTML Help pages.  See the documentation for
-# a list of builtin themes.
-#
-html_theme = 'pandas_sphinx_theme'
-
-# Theme options are theme-specific and customize the look and feel of a theme
-# further.  For a list of options available for each theme, see the
-# documentation.
-#
-html_theme_options = {}
+html_theme = 'pydata_sphinx_theme'
+html_theme_options = {
+  "use_edit_page_button": True,
+  "github_url": "https://github.com/jupyterhub/binderhub",
+  "twitter_url": "https://twitter.com/mybinderteam",
+}
+html_context = {
+    "github_user": "jupyterhub",
+    "github_repo": "binderhub",
+    "github_version": "master",
+    "doc_path": "doc",
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -179,25 +176,46 @@ texinfo_documents = [
      'Miscellaneous'),
 ]
 
-# -- Custom scripts -------------------------------------------
 
-# Grab the latest version of the k8s and helm install instructions.
-helm_instructions = "https://raw.githubusercontent.com/jupyterhub/zero-to-jupyterhub-k8s/master/doc/source/setup-jupyterhub/setup-helm.rst"
+# -- Setup redirects for content that was moved internally
+# each entry represent an `old` path that is now available at a `new` path
+internal_redirects = [
+    ("turn-off.html", "zero-to-binderhub/turn-off.html"),
+    ("setup-registry.html", "zero-to-binderhub/setup-registry.html"),
+    ("setup-binderhub.html", "zero-to-binderhub/setup-binderhub.html"),
+    ("create-cloud-resources.html", "zero-to-binderhub/setup-prerequisites.html"),
+]
+internal_redirect_template = """
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Going to {new_url}</title>
+    <link rel="canonical" href="{canonical_url}{new_url}"/>
+    <meta name="robots" content="noindex">
+    <meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+    <meta http-equiv="refresh" content="0; url={new_url}"/>
+  </head>
+</html>
+"""
 
-resp = requests.get(helm_instructions)
-with open('./helm.txt', 'w') as ff:
-    # Bump section headers
-    lines = resp.text.split('\n')
-    for ii, ln in enumerate(lines):
-        if ln.startswith('---'):
-            lines[ii] = ln.replace('-', '~')
-    ff.write('\n'.join(lines))
 
-# -- Add custom CSS ----------------------------------------------
+def create_internal_redirects(app, docname):
+    if app.builder.name in ("html", "readthedocs"):
+        print(app.config['html_context'])
+        canonical_url = app.config['html_context'].get("canonical_url", "")
+        for old_name, new in internal_redirects:
+            page = internal_redirect_template.format(
+                new_url=new,
+                canonical_url=canonical_url,
+            )
+
+            target_path = app.outdir + "/" + old_name
+            if not os.path.exists(os.path.dirname(target_path)):
+                os.makedirs(os.path.dirname(target_path))
+
+            with open(target_path, "w") as f:
+                f.write(page)
+
+
 def setup(app):
-    app.add_stylesheet('https://gitcdn.link/repo/jupyterhub/binder/master/doc/_static/custom.css')
-
-# -- Run Federation script ----------------------------------------------
-from subprocess import run
-cmd = ["python", op.join('script', 'gen_federation.py')]
-run(cmd)
+    app.connect("build-finished", create_internal_redirects)

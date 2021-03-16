@@ -2,11 +2,12 @@
 The binderhub application
 """
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import ipaddress
 import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from glob import glob
 from urllib.parse import urlparse
 import ipaddress
@@ -21,20 +22,34 @@ import tornado.options
 import tornado.log
 from tornado.log import app_log
 import tornado.web
-from traitlets import Unicode, Integer, Bool, Dict, Set, validate, TraitError, default
+from traitlets import (
+    Bool,
+    Dict,
+    Integer,
+    Set,
+    TraitError,
+    Unicode,
+    Union,
+    default,
+    observe,
+    validate,
+)
 from traitlets.config import Application
 from jupyterhub.services.auth import HubOAuthCallbackHandler
+from jupyterhub.traitlets import Callable
 
 from .base import AboutHandler, Custom404, VersionHandler
 from .build import Build
 from .builder import BuildHandler
 from .health import HealthHandler
 from .launcher import Launcher
+from .log import log_request
 from .registry import DockerRegistry
 from .main import MainHandler, ParameterizedMainHandler, LegacyRedirectHandler, UserRedirectHandler
 from .repoproviders import (GitHubRepoProvider, GitRepoProvider,
                             GitLabRepoProvider, GistRepoProvider,
-                            ZenodoProvider, FigshareProvider)
+                            ZenodoProvider, FigshareProvider, HydroshareProvider,
+                            DataverseProvider)
 from .metrics import MetricsHandler
 
 from .utils import ByteSpecification, url_path_join
@@ -147,13 +162,27 @@ class BinderHub(Application):
             proposal.value = proposal.value + '/'
         return proposal.value
 
-    badge_base_url = Unicode(
-        '',
-        help="Base URL to use when generating launch badges",
+    badge_base_url = Union(
+        trait_types=[Unicode(), Callable()],
+        help="""
+        Base URL to use when generating launch badges.
+        Can also be a function that is passed the current handler and returns
+        the badge base URL, or "" for the default.
+
+        For example, you could get the badge_base_url from a custom HTTP
+        header, the Referer header, or from a request parameter
+        """,
         config=True
     )
+
+    @default('badge_base_url')
+    def _badge_base_url_default(self):
+        return ''
+
     @validate('badge_base_url')
     def _valid_badge_base_url(self, proposal):
+        if callable(proposal.value):
+            return proposal.value
         # add a trailing slash only when a value is set
         if proposal.value and not proposal.value.endswith('/'):
             proposal.value = proposal.value + '/'
@@ -164,11 +193,6 @@ class BinderHub(Application):
         help="""If JupyterHub authentication enabled,
         require user to login (don't create temporary users during launch) and
         start the new server for the logged in user.""",
-        config=True)
-
-    use_named_servers = Bool(
-        False,
-        help="Use named servers when authentication is enabled.",
         config=True)
 
     port = Integer(
@@ -296,6 +320,21 @@ class BinderHub(Application):
         config=True
     )
 
+    build_memory_request = ByteSpecification(
+        0,
+        help="""
+        Amount of memory to request when scheduling a build
+
+        0 reserves no memory.
+
+        This is used as the request for the pod that is spawned to do the building,
+        even though the pod itself will not be using that much memory
+        since the docker building is happening outside the pod.
+        However, it makes kubernetes aware of the resources being used,
+        and lets it schedule more intelligently.
+        """,
+        config=True,
+    )
     build_memory_limit = ByteSpecification(
         0,
         help="""
@@ -303,13 +342,12 @@ class BinderHub(Application):
 
         0 sets no limit.
 
-        This is used as both the memory limit & request for the pod
-        that is spawned to do the building, even though the pod itself
-        will not be using that much memory since the docker building is
-        happening outside the pod. However, it makes kubernetes aware of
-        the resources being used, and lets it schedule more intelligently.
+        This is applied to the docker build itself via repo2docker,
+        though it is also applied to our pod that submits the build,
+        even though that pod will rarely consume much memory.
+        Still, it makes it easier to see the resource limits in place via kubernetes.
         """,
-        config=True
+        config=True,
     )
 
     debug = Bool(
@@ -353,7 +391,22 @@ class BinderHub(Application):
         """,
         config=True,
     )
-    @validate('hub_url')
+
+    hub_url_local = Unicode(
+        help="""
+        The base URL of the JupyterHub instance for local/internal traffic
+
+        If local/internal network connections from the BinderHub process should access
+        JupyterHub using a different URL than public/external traffic set this, default
+        is hub_url
+        """,
+        config=True,
+    )
+    @default('hub_url_local')
+    def _default_hub_url_local(self):
+        return self.hub_url
+
+    @validate('hub_url', 'hub_url_local')
     def _add_slash(self, proposal):
         """trait validator to ensure hub_url ends with a trailing slash"""
         if proposal.value is not None and not proposal.value.endswith('/'):
@@ -371,7 +424,7 @@ class BinderHub(Application):
     )
 
     build_image = Unicode(
-        'jupyter/repo2docker:0.10.0',
+        'jupyter/repo2docker:2021.01.0',
         help="""
         The repo2docker image to be used for doing builds
         """,
@@ -394,6 +447,8 @@ class BinderHub(Application):
             'gl': GitLabRepoProvider,
             'zenodo': ZenodoProvider,
             'figshare': FigshareProvider,
+            'hydroshare': HydroshareProvider,
+            'dataverse': DataverseProvider,
         },
         config=True,
         help="""
@@ -440,6 +495,39 @@ class BinderHub(Application):
         Build infrastructure is kubernetes cluster + docker. This is useful for pure HTML/CSS/JS local development.
         """
     )
+
+    ban_networks = Dict(
+        config=True,
+        help="""
+        Dict of networks from which requests should be rejected with 403
+
+        Keys are CIDR notation (e.g. '1.2.3.4/32'),
+        values are a label used in log / error messages.
+        CIDR strings will be parsed with `ipaddress.ip_network()`.
+        """,
+    )
+
+    @validate("ban_networks")
+    def _cast_ban_networks(self, proposal):
+        """Cast CIDR strings to IPv[4|6]Network objects"""
+        networks = {}
+        for cidr, message in proposal.value.items():
+            networks[ipaddress.ip_network(cidr)] = message
+
+        return networks
+
+    ban_networks_min_prefix_len = Integer(
+        1,
+        help="The shortest prefix in ban_networks",
+    )
+
+    @observe("ban_networks")
+    def _update_prefix_len(self, change):
+        if not change.new:
+            min_len = 1
+        else:
+            min_len = min(net.prefixlen for net in change.new)
+        self.ban_networks_min_prefix_len = min_len or 1
 
     tornado_settings = Dict(
         config=True,
@@ -555,6 +643,7 @@ class BinderHub(Application):
         self.launcher = Launcher(
             parent=self,
             hub_url=self.hub_url,
+            hub_url_local=self.hub_url_local,
             hub_api_token=self.hub_api_token,
             create_user=not self.auth_enabled,
         )
@@ -565,46 +654,51 @@ class BinderHub(Application):
             with open(schema_file) as f:
                 self.event_log.register_schema(json.load(f))
 
-        self.tornado_settings.update({
-            "push_secret": self.push_secret,
-            "image_prefix": self.image_prefix,
-            "debug": self.debug,
-            'hub_url': self.hub_url,
-            'launcher': self.launcher,
-            'appendix': self.appendix,
-            "build_namespace": self.build_namespace,
-            "build_image": self.build_image,
-            'build_node_selector': self.build_node_selector,
-            'build_pool': self.build_pool,
-            "sticky_builds": self.sticky_builds,
-            'log_tail_lines': self.log_tail_lines,
-            'pod_quota': self.pod_quota,
-            'per_repo_quota': self.per_repo_quota,
-            'per_repo_quota_higher': self.per_repo_quota_higher,
-            'repo_providers': self.repo_providers,
-            'use_registry': self.use_registry,
-            'registry': registry,
-            'traitlets_config': self.config,
-            'google_analytics_code': self.google_analytics_code,
-            'google_analytics_domain': self.google_analytics_domain,
-            'about_message': self.about_message,
-            'banner_message': self.banner_message,
-            'extra_footer_scripts': self.extra_footer_scripts,
-            'jinja2_env': jinja_env,
-            'build_memory_limit': self.build_memory_limit,
-            'build_docker_host': self.build_docker_host,
-            'base_url': self.base_url,
-            'badge_base_url': self.badge_base_url,
-            "static_path": os.path.join(HERE, "static"),
-            'static_url_prefix': url_path_join(self.base_url, 'static/'),
-            'template_variables': self.template_variables,
-            'executor': self.executor,
-            'auth_enabled': self.auth_enabled,
-            'use_named_servers': self.use_named_servers,
-            'event_log': self.event_log,
-            'normalized_origin': self.normalized_origin,
-            'allowed_metrics_ips': set(map(ipaddress.ip_network, self.allowed_metrics_ips))
-        })
+        self.tornado_settings.update(
+            {
+                "log_function": log_request,
+                "push_secret": self.push_secret,
+                "image_prefix": self.image_prefix,
+                "debug": self.debug,
+                "hub_url": self.hub_url,
+                "launcher": self.launcher,
+                "appendix": self.appendix,
+                "ban_networks": self.ban_networks,
+                "ban_networks_min_prefix_len": self.ban_networks_min_prefix_len,
+                "build_namespace": self.build_namespace,
+                "build_image": self.build_image,
+                "build_node_selector": self.build_node_selector,
+                "build_pool": self.build_pool,
+                "sticky_builds": self.sticky_builds,
+                "log_tail_lines": self.log_tail_lines,
+                "pod_quota": self.pod_quota,
+                "per_repo_quota": self.per_repo_quota,
+                "per_repo_quota_higher": self.per_repo_quota_higher,
+                "repo_providers": self.repo_providers,
+                "use_registry": self.use_registry,
+                "registry": registry,
+                "traitlets_config": self.config,
+                "google_analytics_code": self.google_analytics_code,
+                "google_analytics_domain": self.google_analytics_domain,
+                "about_message": self.about_message,
+                "banner_message": self.banner_message,
+                "extra_footer_scripts": self.extra_footer_scripts,
+                "jinja2_env": jinja_env,
+                "build_memory_limit": self.build_memory_limit,
+                "build_memory_request": self.build_memory_request,
+                "build_docker_host": self.build_docker_host,
+                "base_url": self.base_url,
+                "badge_base_url": self.badge_base_url,
+                "static_path": os.path.join(HERE, "static"),
+                "static_url_prefix": url_path_join(self.base_url, "static/"),
+                "template_variables": self.template_variables,
+                "executor": self.executor,
+                "auth_enabled": self.auth_enabled,
+                "event_log": self.event_log,
+                "normalized_origin": self.normalized_origin,
+                "allowed_metrics_ips": set(map(ipaddress.ip_network, self.allowed_metrics_ips))
+            }
+        )
         if self.auth_enabled:
             self.tornado_settings['cookie_secret'] = os.urandom(32)
 
@@ -643,7 +737,7 @@ class BinderHub(Application):
                 tornado.web.StaticFileHandler,
                 {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
             (r'/about', AboutHandler),
-            (r'/health', HealthHandler, {'hub_url': self.hub_url}),
+            (r'/health', HealthHandler, {'hub_url': self.hub_url_local}),
             (r'/', MainHandler),
             (r'.*', Custom404),
         ]

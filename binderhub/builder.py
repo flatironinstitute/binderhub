@@ -2,6 +2,7 @@
 Handlers for working with version control services (i.e. GitHub) for builds.
 """
 
+import asyncio
 import hashlib
 from http.client import responses
 import json
@@ -10,8 +11,8 @@ import time
 import escapism
 
 import docker
-from tornado.concurrent import chain_future, Future
 from tornado import web, gen
+from tornado.httpclient import HTTPClientError
 from tornado.web import Finish, authenticated
 from tornado.queues import Queue
 from tornado.iostream import StreamClosedError
@@ -21,6 +22,7 @@ from prometheus_client import Counter, Histogram, Gauge
 
 from .base import BaseHandler
 from .build import Build, FakeBuild
+from .utils import KUBE_REQUEST_TIMEOUT
 
 # Separate buckets for builds and launches.
 # Builds and launches have very different characteristic times,
@@ -51,6 +53,61 @@ LAUNCH_COUNT = Counter(
 )
 BUILDS_INPROGRESS = Gauge('binderhub_inprogress_builds', 'Builds currently in progress')
 LAUNCHES_INPROGRESS = Gauge('binderhub_inprogress_launches', 'Launches currently in progress')
+
+
+def _generate_build_name(build_slug, ref, prefix='', limit=63, ref_length=6):
+    """Generate a unique build name with a limited character length.
+
+    Guaranteed (to acceptable level) to be unique for a given user, repo,
+    and ref.
+
+    We really, *really* care that we always end up with the same
+    'build_name' for a particular repo + ref, but the default max
+    character limit for build names is 63. To meet this constraint, we
+    include a prefixed hash of the user / repo in all build names and do
+    some length limiting :)
+
+    Note that ``build`` names only need to be unique over a shorter period
+    of time, while ``image`` names need to be unique for longer. Hence,
+    different strategies are used.
+
+    We also ensure that the returned value is DNS safe, by only using
+    ascii lowercase + digits. everything else is escaped
+    """
+    # escape parts that came from providers (build slug, ref)
+    # build names are case-insensitive `.lower()` is called at the end
+    build_slug = _safe_build_slug(build_slug, limit=limit - len(prefix) - ref_length - 1)
+    ref = _safe_build_slug(ref, limit=ref_length, hash_length=2)
+
+    return '{prefix}{safe_slug}-{ref}'.format(
+        prefix=prefix,
+        safe_slug=build_slug,
+        ref=ref[:ref_length],
+    ).lower()
+
+
+def _safe_build_slug(build_slug, limit, hash_length=6):
+    """Create a unique-ish name from a slug.
+
+    This function catches a bug where a build slug may not produce a valid
+    image name (e.g. arepo name ending with _, which results in image name
+    ending with '-' which is invalid). This ensures that the image name is
+    always safe, regardless of build slugs returned by providers
+    (rather than requiring all providers to return image-safe build slugs
+    below a certain length).
+
+    Since this changes the image name generation scheme, all existing cached
+    images will be invalidated.
+    """
+    build_slug_hash = hashlib.sha256(build_slug.encode('utf-8')).hexdigest()
+    safe_chars = set(string.ascii_letters + string.digits)
+    def escape(s):
+        return escapism.escape(s, safe=safe_chars, escape_char='-')
+    build_slug = escape(build_slug)
+    return '{name}-{hash}'.format(
+        name=build_slug[:limit - hash_length - 1],
+        hash=build_slug_hash[:hash_length],
+    ).lower()
 
 
 class BuildHandler(BaseHandler):
@@ -124,68 +181,19 @@ class BuildHandler(BaseHandler):
 
         self.event_log = self.settings['event_log']
 
-    def _generate_build_name(self, build_slug, ref, prefix='', limit=63, ref_length=6):
-        """
-        Generate a unique build name with a limited character length..
-
-        Guaranteed (to acceptable level) to be unique for a given user, repo,
-        and ref.
-
-        We really, *really* care that we always end up with the same
-        'build_name' for a particular repo + ref, but the default max
-        character limit for build names is 63. To meet this constraint, we
-        include a prefixed hash of the user / repo in all build names and do
-        some length limiting :)
-
-        Note that ``build`` names only need to be unique over a shorter period
-        of time, while ``image`` names need to be unique for longer. Hence,
-        different strategies are used.
-
-        We also ensure that the returned value is DNS safe, by only using
-        ascii lowercase + digits. everything else is escaped
-        """
-
-        # escape parts that came from providers (build slug, ref)
-        # only build_slug *really* needs this (refs should be sha1 hashes)
-        # build names are case-insensitive because ascii_letters are allowed,
-        # and `.lower()` is called at the end
-        safe_chars = set(string.ascii_letters + string.digits)
-        def escape(s):
-            return escapism.escape(s, safe=safe_chars, escape_char='-')
-
-        build_slug = self._safe_build_slug(build_slug, limit=limit - len(prefix) - ref_length - 1)
-        ref = escape(ref)
-
-        return '{prefix}{safe_slug}-{ref}'.format(
-            prefix=prefix,
-            safe_slug=build_slug,
-            ref=ref[:ref_length],
-        ).lower()
-
-    def _safe_build_slug(self, build_slug, limit, hash_length=6):
-        """
-        This function catches a bug where build slug may not produce a valid image name
-        (e.g. repo name ending with _, which results in image name ending with '-' which is invalid).
-        This ensures that the image name is always safe, regardless of build slugs returned by providers
-        (rather than requiring all providers to return image-safe build slugs below a certain length).
-        Since this changes the image name generation scheme, all existing cached images will be invalidated.
-        """
-        build_slug_hash = hashlib.sha256(build_slug.encode('utf-8')).hexdigest()
-        safe_chars = set(string.ascii_letters + string.digits)
-        def escape(s):
-            return escapism.escape(s, safe=safe_chars, escape_char='-')
-        build_slug = escape(build_slug)
-        return '{name}-{hash}'.format(
-            name=build_slug[:limit - hash_length - 1],
-            hash=build_slug_hash[:hash_length],
-        ).lower()
-
-
     async def fail(self, message):
-        await self.emit({
-            'phase': 'failed',
-            'message': message + '\n',
-        })
+        await self.emit(
+            {
+                "phase": "failed",
+                "message": message + "\n",
+            }
+        )
+
+    def set_default_headers(self):
+        super().set_default_headers()
+        # set up for sending event streams
+        self.set_header("content-type", "text/event-stream")
+        self.set_header("cache-control", "no-cache")
 
     @authenticated
     async def get(self, provider_prefix, _unescaped_spec):
@@ -205,10 +213,6 @@ class BuildHandler(BaseHandler):
         """
         prefix = '/build/' + provider_prefix
         spec = self.get_spec_from_request(prefix)
-
-        # set up for sending event streams
-        self.set_header('content-type', 'text/event-stream')
-        self.set_header('cache-control', 'no-cache')
 
         # Verify if the provider is valid for EventSource.
         # EventSource cannot handle HTTP errors, so we must validate and send
@@ -255,18 +259,51 @@ class BuildHandler(BaseHandler):
         except Exception as e:
             await self.fail("Error resolving ref for %s: %s" % (key, e))
             return
+
         if ref is None:
-            await self.fail("Could not resolve ref for %s. Double check your URL." % key)
+            error_message = ["Could not resolve ref for %s. Double check your URL." % key]
+
+            if provider.name == "GitHub":
+                error_message.append('GitHub recently changed default branches from "master" to "main".')
+
+                if provider.unresolved_ref == "master":
+                    error_message.append('Did you mean the "main" branch?')
+                elif provider.unresolved_ref == "main":
+                    error_message.append('Did you mean the "master" branch?')
+
+            else:
+                error_message.append("Is your repo public?")
+
+            await self.fail(" ".join(error_message))
             return
+
+        self.ref_url = await provider.get_resolved_ref_url()
+        resolved_spec = await provider.get_resolved_spec()
+
+        badge_base_url = self.get_badge_base_url()
+        self.binder_launch_host = badge_base_url or '{proto}://{host}{base_url}'.format(
+            proto=self.request.protocol,
+            host=self.request.host,
+            base_url=self.settings['base_url'],
+        )
+        # These are relative URLs so do not have a leading /
+        self.binder_request = 'v2/{provider}/{spec}'.format(
+            provider=provider_prefix,
+            spec=spec,
+        )
+        self.binder_persistent_request = 'v2/{provider}/{spec}'.format(
+            provider=provider_prefix,
+            spec=resolved_spec,
+        )
 
         # generate a complete build name (for GitHub: `build-{user}-{repo}-{ref}`)
 
         image_prefix = self.settings['image_prefix']
 
         # Enforces max 255 characters before image
-        safe_build_slug = self._safe_build_slug(provider.get_build_slug(), limit=255 - len(image_prefix))
+        safe_build_slug = _safe_build_slug(provider.get_build_slug(), limit=255 - len(image_prefix))
 
-        build_name = self._generate_build_name(provider.get_build_slug(), ref, prefix='build-')
+        build_name = _generate_build_name(provider.get_build_slug(), ref, prefix='build-')
 
         image_name = self.image_name = '{prefix}{build_slug}:{ref}'.format(
             prefix=image_prefix,
@@ -275,8 +312,14 @@ class BuildHandler(BaseHandler):
         ).replace('_', '-').lower()
 
         if self.settings['use_registry']:
-            image_manifest = await self.registry.get_image_manifest(*image_name.split('/')[-1].rsplit(':', 1))
-            image_found = bool(image_manifest)
+            for _ in range(3):
+                try:
+                    image_manifest = await self.registry.get_image_manifest(*image_name.split('/')[-1].rsplit(':', 1))
+                    image_found = bool(image_manifest)
+                    break
+                except HTTPClientError:
+                    app_log.exception("Tornado HTTP Timeout error: Failed to get image manifest for %s", image_name)
+                    image_found = False
         else:
             # Check if the image exists locally!
             # Assume we're running in single-node mode or all binder pods are assigned to the same node!
@@ -306,9 +349,10 @@ class BuildHandler(BaseHandler):
             })
             with LAUNCHES_INPROGRESS.track_inprogress():
                 await self.launch(kube, provider)
-            self.event_log.emit('binderhub.jupyter.org/launch', 3, {
+            self.event_log.emit('binderhub.jupyter.org/launch', 4, {
                 'provider': provider.name,
                 'spec': spec,
+                'ref': ref,
                 'status': 'success',
                 'origin': self.settings['normalized_origin'] if self.settings['normalized_origin'] else self.request.host
             })
@@ -324,27 +368,11 @@ class BuildHandler(BaseHandler):
 
         BuildClass = FakeBuild if self.settings.get('fake_build') else Build
 
-        binder_url = '{proto}://{host}{base_url}v2/{provider}/{spec}'.format(
-            proto=self.request.protocol,
-            host=self.request.host,
-            base_url=self.settings['base_url'],
-            provider=provider_prefix,
-            spec=spec,
-        )
-        resolved_spec = await provider.get_resolved_spec()
-        persistent_binder_url = '{proto}://{host}{base_url}v2/{provider}/{spec}'.format(
-            proto=self.request.protocol,
-            host=self.request.host,
-            base_url=self.settings['base_url'],
-            provider=provider_prefix,
-            spec=resolved_spec,
-        )
-        ref_url = await provider.get_resolved_ref_url()
         appendix = self.settings['appendix'].format(
-            binder_url=binder_url,
+            binder_url=self.binder_launch_host + self.binder_request,
+            persistent_binder_url=self.binder_launch_host + self.binder_persistent_request,
             repo_url=repo_url,
-            persistent_binder_url=persistent_binder_url,
-            ref_url=ref_url,
+            ref_url=self.ref_url,
         )
 
         self.build = build = BuildClass(
@@ -358,6 +386,7 @@ class BuildHandler(BaseHandler):
             push_secret=push_secret,
             build_image=self.settings['build_image'],
             memory_limit=self.settings['build_memory_limit'],
+            memory_request=self.settings['build_memory_request'],
             docker_host=self.settings['build_docker_host'],
             node_selector=self.settings['build_node_selector'],
             appendix=appendix,
@@ -428,9 +457,10 @@ class BuildHandler(BaseHandler):
             BUILD_COUNT.labels(status='success', **self.repo_metric_labels).inc()
             with LAUNCHES_INPROGRESS.track_inprogress():
                 await self.launch(kube, provider)
-            self.event_log.emit('binderhub.jupyter.org/launch', 3, {
+            self.event_log.emit('binderhub.jupyter.org/launch', 4, {
                 'provider': provider.name,
                 'spec': spec,
+                'ref': ref,
                 'status': 'success',
                 'origin': self.settings['normalized_origin'] if self.settings['normalized_origin'] else self.request.host
             })
@@ -460,22 +490,21 @@ class BuildHandler(BaseHandler):
 
         # TODO: run a watch to keep this up to date in the background
         pool = self.settings['executor']
-        f = pool.submit(kube.list_namespaced_pod,
+        f = pool.submit(
+            kube.list_namespaced_pod,
             self.settings["build_namespace"],
             label_selector='app=jupyterhub,component=singleuser-server',
+            _request_timeout=KUBE_REQUEST_TIMEOUT,
+            _preload_content=False,
         )
-        # concurrent.futures.Future isn't awaitable
-        # wrap in tornado Future
-        # tornado 5 will have `.run_in_executor`
-        tf = Future()
-        chain_future(f, tf)
-        pods = await tf
-        for pod in pods.items:
+        resp = await asyncio.wrap_future(f)
+        pods = json.loads(resp.read())
+        for pod in pods["items"]:
             total_pods += 1
-            for container in pod.spec.containers:
+            for container in pod["spec"]["containers"]:
                 # is the container running the same image as us?
                 # if so, count one for the current repo.
-                image = container.image.rsplit(':', 1)[0]
+                image = container["image"].rsplit(":", 1)[0]
                 if image == image_no_tag:
                     matching_pods += 1
                     break
@@ -509,7 +538,7 @@ class BuildHandler(BaseHandler):
                 # get logged in user's name
                 user_model = self.hub_auth.get_user(self)
                 username = user_model['name']
-                if self.settings['use_named_servers']:
+                if launcher.allow_named_servers:
                     # user can launch multiple servers, so create a unique server name
                     server_name = launcher.unique_name_from_repo(self.repo_url)
                 else:
@@ -519,19 +548,22 @@ class BuildHandler(BaseHandler):
                 username = launcher.unique_name_from_repo(self.repo_url)
                 server_name = ''
             try:
-                server_info = await launcher.launch(image=self.image_name, username=username,
-                                                    server_name=server_name, repo_url=self.repo_url,
-                                                    options=self.launch_options)
-                LAUNCH_TIME.labels(
-                    status='success', retries=i,
-                ).observe(time.perf_counter() - launch_starttime)
-                LAUNCH_COUNT.labels(
-                    status='success', **self.repo_metric_labels,
-                ).inc()
-
+                extra_args = {
+                    'binder_ref_url': self.ref_url,
+                    'binder_launch_host': self.binder_launch_host,
+                    'binder_request': self.binder_request,
+                    'binder_persistent_request': self.binder_persistent_request,
+                }
+                extra_args.update(self.launch_options)
+                server_info = await launcher.launch(image=self.image_name,
+                                                    username=username,
+                                                    server_name=server_name,
+                                                    repo_url=self.repo_url,
+                                                    extra_args=extra_args)
             except Exception as e:
                 if isinstance(e, web.HTTPError) and e.status_code == 409:
                     raise
+                duration = time.perf_counter() - launch_starttime
                 if i + 1 == launcher.retries:
                     status = 'failure'
                 else:
@@ -552,17 +584,33 @@ class BuildHandler(BaseHandler):
                     raise
 
                 # not the last attempt, try again
-                app_log.error("Retrying launch after error: %s", e)
-                await self.emit({
-                    'phase': 'launching',
-                    'message': 'Launch attempt {} failed, retrying...\n'.format(i + 1),
-                })
+                app_log.error(
+                    "Retrying launch of %s after error (duration=%.0fs, attempt=%s): %r",
+                    self.repo_url,
+                    duration,
+                    i + 1,
+                    e,
+                )
+                await self.emit(
+                    {
+                        "phase": "launching",
+                        "message": "Launch attempt {} failed, retrying...\n".format(
+                            i + 1
+                        ),
+                    }
+                )
                 await gen.sleep(retry_delay)
                 # exponential backoff for consecutive failures
                 retry_delay *= 2
                 continue
             else:
                 # success
+                duration = time.perf_counter() - launch_starttime
+                LAUNCH_TIME.labels(status="success", retries=i).observe(duration)
+                LAUNCH_COUNT.labels(
+                    status='success', **self.repo_metric_labels,
+                ).inc()
+                app_log.info("Launched %s in %.0fs", self.repo_url, duration)
                 break
         event = {
             'phase': 'ready',

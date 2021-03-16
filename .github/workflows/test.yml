@@ -1,0 +1,153 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+    tags: ["**"]
+  workflow_dispatch:
+
+
+jobs:
+  # Most of the "main", "auth" and "helm" jobs are the same and only differ
+  # in small things. Unfortunately there is no easy way to share steps between
+  # jobs or have "template" jobs, so we use `if` conditions on steps
+  tests:
+    runs-on: ubuntu-20.04
+    strategy:
+      # keep running so we can see if tests with other k3s/k8s/helm versions pass
+      fail-fast: false
+      matrix:
+        include:
+            - k3s-channel: v1.19
+              helm-version: v3.5.0
+              test: main
+            - k3s-channel: v1.19
+              helm-version: v3.5.0
+              test: auth
+            - k3s-channel: v1.19
+              helm-version: v3.5.0
+              test: helm
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          # chartpress requires the full history
+          fetch-depth: 0
+
+      - uses: jupyterhub/action-k3s-helm@v1
+        with:
+          k3s-version: ${{ matrix.k3s-version }}
+          helm-version: ${{ matrix.helm-version }}
+          metrics-enabled: false
+          traefik-enabled: false
+          docker-enabled: true
+
+      - name: Setup OS level dependencies
+        run: |
+            sudo apt-get update
+            sudo apt-get install --yes \
+              build-essential \
+              curl \
+              libcurl4-openssl-dev \
+              libssl-dev
+
+      - uses: actions/setup-node@v2-beta
+        with:
+          node-version: '14'
+
+      - name: Run webpack to build static assets
+        run: |
+            npm install
+            npm run webpack
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Setup Python package dependencies
+        run: |
+            # Install development requirements, package requirements, and frozen image
+            # requirements, with an increasing priority.
+            pip install -r dev-requirements.txt
+            pip install .
+            pip install -r helm-chart/images/binderhub/requirements.txt
+
+      - name: Install JupyterHub chart for main tests
+        if: matrix.test == 'main'
+        run: |
+            ./testing/local-binder-k8s-hub/install-jupyterhub-chart
+
+      - name: Install JupyterHub chart for auth tests
+        if: matrix.test == 'auth'
+        run: |
+            ./testing/local-binder-k8s-hub/install-jupyterhub-chart --auth
+
+      - name: Use chartpress to create the helm chart
+        if: matrix.test == 'helm'
+        run: |
+            # Use chartpress to create the helm chart and build its images
+            helm dependency update ./helm-chart/binderhub
+            (cd helm-chart && chartpress)
+            git --no-pager diff --color=always
+
+      - name: Validate the chart against the k8s API
+        if: matrix.test == 'helm'
+        run: |
+            helm template --validate binderhub-test helm-chart/binderhub \
+                --values testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
+                --set config.BinderHub.hub_url=http://localhost:30902 \
+                --set config.BinderHub.access_token=$GITHUB_ACCESS_TOKEN
+
+      - name: Install the chart
+        if: matrix.test == 'helm'
+        run: |
+          helm upgrade --install binderhub-test helm-chart/binderhub \
+              --values testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
+              --set config.BinderHub.hub_url=http://localhost:30902 \
+              --set config.BinderHub.hub_url_local=http://proxy-public \
+              --set config.BinderHub.access_token=$GITHUB_ACCESS_TOKEN
+
+      - name: Await and curl JupyterHub
+        run: |
+            . ci/common
+            await_jupyterhub
+
+            echo curl http://localhost:30902/hub/api/ should print the JupyterHub version
+            curl http://localhost:30902/hub/api/ --max-time 5 --retry 5 --retry-delay 1 --retry-connrefused
+
+      - name: Await and curl BinderHub
+        if: matrix.test == 'helm'
+        run: |
+            . ci/common
+            await_binderhub
+
+            echo curl http://localhost:30901/health to check BinderHub\'s health
+            curl http://localhost:30901/health --max-time 5 --retry 5 --retry-delay 1 --retry-connrefused
+
+      - name: Run main tests
+        if: matrix.test == 'main'
+        # running the "main" tests means "all tests that aren't auth"
+        run: pytest -m "not auth" -v --maxfail=10 --cov binderhub --durations=10 --color=yes
+
+      - name: Run auth tests
+        if: matrix.test == 'auth'
+        # running the "auth" tests means "all tests that are marked as auth"
+        run: pytest -m "auth" -v --maxfail=10 --cov binderhub --durations=10 --color=yes
+
+      - name: Run helm tests
+        if: matrix.test == 'helm'
+        run: |
+            export BINDER_URL=http://localhost:30901
+            pytest -m "remote" -v --maxfail=10 --cov binderhub --durations=10 --color=yes
+
+      # GitHub Action reference: https://github.com/jupyterhub/action-k8s-namespace-report
+      - name: Kubernetes namespace report
+        uses: jupyterhub/action-k8s-namespace-report@v1
+        if: always()
+        with:
+          important-workloads: deploy/binder deploy/hub deploy/proxy
+
+      # GitHub action reference: https://github.com/codecov/codecov-action
+      - name: Upload coverage stats
+        uses: codecov/codecov-action@v1
+        if: ${{ always() }}

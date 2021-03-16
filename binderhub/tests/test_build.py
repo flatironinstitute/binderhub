@@ -15,19 +15,29 @@ from binderhub.build import Build
 from .utils import async_requests
 
 
+# We have optimized this slow test, for more information, see the README of
+# https://github.com/binderhub-ci-repos/minimal-dockerfile.
 @pytest.mark.asyncio(timeout=900)
 @pytest.mark.parametrize("slug", [
-    "gh/binderhub-ci-repos/requirements/d687a7f9e6946ab01ef2baa7bd6d5b73c6e904fd",
-    "git/{}/d687a7f9e6946ab01ef2baa7bd6d5b73c6e904fd".format(
-        quote("https://github.com/binderhub-ci-repos/requirements", safe='')
+    # git/ Git repo provider
+    "git/{}/HEAD".format(
+        quote("https://github.com/binderhub-ci-repos/cached-minimal-dockerfile", safe='')
     ),
-    "git/{}/master".format(
-        quote("https://github.com/binderhub-ci-repos/requirements", safe='')
+    "git/{}/596b52f10efb0c9befc0c4ae850cc5175297d71c".format(
+        quote("https://github.com/binderhub-ci-repos/cached-minimal-dockerfile", safe='')
     ),
-    "gl/minrk%2Fbinderhub-ci/0d4a217d40660efaa58761d8c6084e7cf5453cca",
+    # gh/ GitHub repo provider
+    "gh/binderhub-ci-repos/cached-minimal-dockerfile/HEAD",
+    "gh/binderhub-ci-repos/cached-minimal-dockerfile/596b52f10efb0c9befc0c4ae850cc5175297d71c",
+    # gl/ GitLab repo provider
+    "gl/binderhub-ci-repos%2Fcached-minimal-dockerfile/HEAD",
+    "gl/binderhub-ci-repos%2Fcached-minimal-dockerfile/596b52f10efb0c9befc0c4ae850cc5175297d71c",
 ])
 @pytest.mark.remote
 async def test_build(app, needs_build, needs_launch, always_build, slug, pytestconfig):
+    """
+    Test build a repo that is very quick and easy to build.
+    """
     # can't use mark.github_api since only some tests here use GitHub
     if slug.startswith('gh/') and "not github_api" in pytestconfig.getoption('markexpr'):
         pytest.skip("Skipping GitHub API test")
@@ -42,6 +52,13 @@ async def test_build(app, needs_build, needs_launch, always_build, slug, pytestc
             events.append(event)
             assert 'message' in event
             sys.stdout.write(event['message'])
+            # this is the signal that everything is ready, pod is launched
+            # and server is up inside the pod. Break out of the loop now
+            # because BinderHub keeps the connection open for many seconds
+            # after to avoid "reconnects" from slow clients
+            if event.get('phase') == 'ready':
+                r.close()
+                break
 
     final = events[-1]
     assert 'phase' in final
@@ -54,10 +71,31 @@ async def test_build(app, needs_build, needs_launch, always_build, slug, pytestc
     assert r.url.startswith(final['url'])
 
 
+def _list_dind_pods_mock():
+    """Mock list of DIND pods"""
+    mock_response = mock.MagicMock()
+    mock_response.read.return_value = json.dumps(
+        {
+            "items": [
+                {
+                    "spec": {"nodeName": name},
+                }
+                for name in ["node-a", "node-b"]
+            ]
+        }
+    )
+    mock_k8s_api = mock.MagicMock()
+    mock_k8s_api.list_namespaced_pod.return_value = mock_response
+    return mock_k8s_api
+
+
 def test_default_affinity():
     # check that the default affinity is a pod anti-affinity
+
+    mock_k8s_api = _list_dind_pods_mock()
+
     build = Build(
-        mock.MagicMock(), api=mock.MagicMock(), name='test_build',
+        mock.MagicMock(), api=mock_k8s_api, name='test_build',
         namespace='build_namespace', repo_url=mock.MagicMock(),
         ref=mock.MagicMock(), build_image=mock.MagicMock(),
         image_name=mock.MagicMock(), push_secret=mock.MagicMock(),
@@ -75,14 +113,7 @@ def test_default_affinity():
 
 def test_sticky_builds_affinity():
     # Setup some mock objects for the response from the k8s API
-    Pod = namedtuple("Pod", "spec")
-    PodSpec = namedtuple("PodSpec", "node_name")
-    PodList = namedtuple("PodList", "items")
-
-    mock_k8s_api = mock.MagicMock()
-    mock_k8s_api.list_namespaced_pod.return_value = PodList(
-        [Pod(PodSpec("node-a")), Pod(PodSpec("node-b"))],
-    )
+    mock_k8s_api = _list_dind_pods_mock()
 
     build = Build(
         mock.MagicMock(), api=mock_k8s_api, name='test_build',
@@ -110,19 +141,21 @@ def test_git_credentials_passed_to_podspec_upon_submit():
         'client_id': 'my_username',
         'access_token': 'my_access_token',
     }
+
+    mock_k8s_api = _list_dind_pods_mock()
+
     build = Build(
-        mock.MagicMock(), api=mock.MagicMock(), name='test_build',
+        mock.MagicMock(), api=mock_k8s_api, name='test_build',
         namespace='build_namespace', repo_url=mock.MagicMock(), ref=mock.MagicMock(),
         git_credentials=git_credentials, build_image=mock.MagicMock(),
         image_name=mock.MagicMock(), push_secret=mock.MagicMock(),
         memory_limit=mock.MagicMock(), docker_host='http://mydockerregistry.local',
         node_selector=mock.MagicMock())
 
-    with mock.patch.object(build, 'api') as api_patch, \
-            mock.patch.object(build.stop_event, 'is_set', return_value=True):
+    with mock.patch.object(build.stop_event, 'is_set', return_value=True):
         build.submit()
 
-    call_args_list = api_patch.create_namespaced_pod.call_args_list
+    call_args_list = mock_k8s_api.create_namespaced_pod.call_args_list
     assert len(call_args_list) == 1
 
     args = call_args_list[0][0]

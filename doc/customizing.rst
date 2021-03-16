@@ -16,12 +16,31 @@ the following pattern::
         <JUPYTERHUB-CONFIG-YAML>
 
 For example, see `this section of the mybinder.org Helm Chart
-<https://github.com/jupyterhub/mybinder.org-deploy/blob/staging/mybinder/values.yaml#L54>`_.
+<https://github.com/jupyterhub/mybinder.org-deploy/blob/a7d83838aea24a4f143a2b8630f4347fa722a6b3/mybinder/values.yaml#L192>`_.
 
 For information on how to configure your JupyterHub deployment, see the
 `JupyterHub for Kubernetes Customization Guide
 <https://zero-to-jupyterhub.readthedocs.io/en/latest/#customization-guide>`_.
 
+If you want to customise the spawner you can subclass it in ``extraConfig``.
+For example::
+
+  binderhub:
+    jupyterhub:
+      hub:
+        extraConfig:
+          10-binder-customisations: |
+            class MyCustomBinderSpawner(BinderSpawner):
+                ...
+
+            c.JupyterHub.spawner_class = MyCustomBinderSpawner
+
+BinderHub uses the `jupyterhub.hub.extraConfig setting
+<https://zero-to-jupyterhub.readthedocs.io/en/latest/administrator/advanced.html#hub-extraconfig>`_
+to customise JupyterHub.
+For example, ``BinderSpawner`` is defined under the ``00-binder`` key.
+Keys are evaluated in alphanumeric order, so later keys such as
+``10-binder-customisations`` can use objects defined in earlier keys.
 
 About page customization
 ------------------------
@@ -179,3 +198,24 @@ of 1337 to any repository in the JupyterHub organization.
            - pattern: ^jupyterhub.*
              config:
                 quota: 1337
+
+
+Banning specific repositories
+----------------------------------------------
+
+You may want to exclude certain repositories from your BinderHub instance.
+You can do this by providing a list of **banned_spec** patterns.
+BinderHub will not accept URLs matching any of the banned patterns.
+
+For example, the following configuration will prevent notebooks in the spacy-binder
+repository and the ml-training repository from launching.
+
+.. code-block:: yaml
+
+   config:
+     GitHubRepoProvider:
+       # Add banned repositories to the list below
+       # They should be strings that will match "^<org-name>/<repo-name>.*"
+       banned_specs:
+         - ^ines/spacy-binder.*
+         - ^aschen/ml-training.*

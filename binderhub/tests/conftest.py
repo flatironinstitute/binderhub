@@ -5,6 +5,7 @@ from collections import defaultdict
 import inspect
 import json
 import os
+import subprocess
 import time
 from urllib.parse import urlparse
 from unittest import mock
@@ -23,21 +24,44 @@ from .utils import MockAsyncHTTPClient
 
 here = os.path.abspath(os.path.dirname(__file__))
 root = os.path.join(here, os.pardir, os.pardir)
-minikube_testing_config = os.path.join(root, 'testing', 'minikube', 'binderhub_config.py')
-minikube_testing_auth_config = os.path.join(root, 'testing', 'minikube', 'binderhub_auth_config.py')
+binderhub_config_path = os.path.join(root, 'testing/local-binder-k8s-hub/binderhub_config.py')
+binderhub_config_auth_additions_path = os.path.join(root, 'testing/local-binder-k8s-hub/binderhub_config_auth_additions.py')
 
-TEST_NAMESPACE = os.environ.get('BINDER_TEST_NAMESPACE') or 'binder-test'
-KUBERNETES_AVAILABLE = False
+# These are automatically determined
+K8S_AVAILABLE = False
 
+# get the current context's namespace or assume it is "default"
+K8S_NAMESPACE = subprocess.check_output([
+    "kubectl", "config", "view", "--minify", "--output", "jsonpath={..namespace}"
+], text=True).strip() or "default"
 ON_TRAVIS = os.environ.get('TRAVIS')
 
-# set BINDER_TEST_URL to run tests against an already-running binderhub
+# set BINDER_URL to run tests against an already-running binderhub
 # this will skip launching BinderHub internally in the app fixture
-BINDER_URL = os.environ.get('BINDER_TEST_URL')
+BINDER_URL = os.environ.get('BINDER_URL')
 REMOTE_BINDER = bool(BINDER_URL)
 
 
+def pytest_configure(config):
+    """This function has meaning to pytest, for more information, see:
+    https://docs.pytest.org/en/stable/reference.html#pytest.hookspec.pytest_configure
+    """
+    # register our custom markers
+    config.addinivalue_line(
+        "markers", "auth: mark test to run only on auth environments"
+    )
+    config.addinivalue_line(
+        "markers", "remote: mark test to run only on remote environments"
+    )
+    config.addinivalue_line(
+        "markers", "github_api: mark test to run only with GitHub API credentials"
+    )
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus):
+    """This function has meaning to pytest, for more information, see:
+    https://docs.pytest.org/en/stable/reference.html#pytest.hookspec.pytest_terminal_summary
+    """
     if not MockAsyncHTTPClient.records:
         return
     hosts = defaultdict(dict)
@@ -49,8 +73,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus):
     for host, records in hosts.items():
         fname = 'http-record.{}.json'.format(host)
         print("Recorded http responses for {} in {}".format(host, fname))
+        print("To update the recordings used by the tests you will have"
+              " to move or merge the newly created recordings with existing"
+              f" recordings in {here}.")
 
-        with open(fname, 'w') as f:
+        # Always store newly created recordings in the root directory
+        # and ask a human to decide if they want to overwrite or merge
+        # them with existing recordings
+        with open(os.path.join(root, fname), 'w') as f:
             json.dump(records, f, sort_keys=True, indent=1)
 
 
@@ -74,6 +104,13 @@ def pytest_collection_modifyitems(items):
 def mock_asynchttpclient(request):
     """mock AsyncHTTPClient for recording responses"""
     AsyncHTTPClient.configure(MockAsyncHTTPClient)
+
+    # We have to explicitly load the mock responses we want to use
+    # We should use as few mocked responses as possible because it means
+    # we won't notice changes in the responses from the host that we are
+    # mocking and our mock responses don't simulate every and all behaviour
+    load_mock_responses("www.hydroshare.org")
+
     if not os.getenv('GITHUB_ACCESS_TOKEN'):
         load_mock_responses('api.github.com')
         load_mock_responses('zenodo.org')
@@ -101,18 +138,17 @@ def _binderhub_config():
     Currently separate from the app fixture
     so that it can have a different scope (only once per session).
     """
-    cfg = PyFileConfigLoader(minikube_testing_config).load_config()
-    cfg.BinderHub.build_namespace = TEST_NAMESPACE
-    global KUBERNETES_AVAILABLE
+    cfg = PyFileConfigLoader(binderhub_config_path).load_config()
+    global K8S_AVAILABLE
     try:
         kubernetes.config.load_kube_config()
     except Exception:
         cfg.BinderHub.builder_required = False
-        KUBERNETES_AVAILABLE = False
+        K8S_AVAILABLE = False
         if ON_TRAVIS:
             pytest.fail("Kubernetes should be available on Travis")
     else:
-        KUBERNETES_AVAILABLE = True
+        K8S_AVAILABLE = True
     if REMOTE_BINDER:
         return
 
@@ -132,7 +168,7 @@ def _binderhub_config():
 class RemoteBinderHub(object):
     """Mock class for the app fixture when Binder is remote
 
-    Has a URL for the binder location and a configured BinnderHub instance
+    Has a URL for the binder location and a configured BinderHub instance
     so tests can look at the configuration of the hub.
 
     Note: this only gives back the default configuration. It could be that the
@@ -184,7 +220,7 @@ def app(request, io_loop, _binderhub_config):
 
     if hasattr(request, 'param') and request.param is True:
         # load conf for auth test
-        cfg = PyFileConfigLoader(minikube_testing_auth_config).load_config()
+        cfg = PyFileConfigLoader(binderhub_config_auth_additions_path).load_config()
         _binderhub_config.merge(cfg)
     bhub = BinderHub.instance(config=_binderhub_config)
     bhub.initialize([])
@@ -203,14 +239,14 @@ def app(request, io_loop, _binderhub_config):
     return bhub
 
 
-def cleanup_pods(namespace, labels):
-    """Cleanup pods in a namespace that match the given labels"""
+def cleanup_pods(labels):
+    """Cleanup pods in current namespace that match the given labels"""
     kube = kubernetes.client.CoreV1Api()
 
     def get_pods():
-        """Return  list of pods matching given labels"""
+        """Return list of pods matching given labels"""
         return [
-            pod for pod in kube.list_namespaced_pod(namespace).items
+            pod for pod in kube.list_namespaced_pod(namespace=K8S_NAMESPACE).items
             if all(
                 pod.metadata.labels.get(key) == value
                 for key, value in labels.items()
@@ -222,8 +258,8 @@ def cleanup_pods(namespace, labels):
         print(f"deleting pod {pod.metadata.name}")
         try:
             kube.delete_namespaced_pod(
+                namespace=K8S_NAMESPACE,
                 name=pod.metadata.name,
-                namespace=namespace,
                 body=kubernetes.client.V1DeleteOptions(grace_period_seconds=0),
             )
         except kubernetes.client.rest.ApiException as e:
@@ -242,17 +278,22 @@ def cleanup_pods(namespace, labels):
 
 @pytest.fixture(scope='session')
 def cleanup_binder_pods(request):
-    """Cleanup running binders.
-
-    Fires at beginning and end of session
-    """
-    if not KUBERNETES_AVAILABLE:
-        # kubernetes not available, nothing to do
+    """Cleanup running user sessions at the beginning and end of a session."""
+    if not K8S_AVAILABLE:
         return
-
     def cleanup():
-        return cleanup_pods(TEST_NAMESPACE,
-                            {'component': 'singleuser-server'})
+        return cleanup_pods({'component': 'singleuser-server'})
+    cleanup()
+    request.addfinalizer(cleanup)
+
+
+@pytest.fixture(scope='session')
+def cleanup_build_pods(request):
+    """Cleanup running build pods at the beginning and end of a session."""
+    if not K8S_AVAILABLE:
+        return
+    def cleanup():
+        return cleanup_pods({'component': 'binderhub-build'})
     cleanup()
     request.addfinalizer(cleanup)
 
@@ -262,28 +303,6 @@ def needs_launch(app, cleanup_binder_pods):
     """Fixture to skip tests if launch is unavailable"""
     if not BINDER_URL and not app.hub_url:
         raise pytest.skip("test requires launcher (jupyterhub)")
-
-
-@pytest.fixture(scope='session')
-def cleanup_build_pods(request):
-    if not KUBERNETES_AVAILABLE:
-        # kubernetes not available, nothing to do
-        return
-    kube = kubernetes.client.CoreV1Api()
-    try:
-        kube.create_namespace(
-            kubernetes.client.V1Namespace(metadata={'name': TEST_NAMESPACE})
-        )
-    except kubernetes.client.rest.ApiException as e:
-        # ignore 409: already exists
-        if e.status != 409:
-            raise
-
-    def cleanup():
-        return cleanup_pods(TEST_NAMESPACE,
-                            {'component': 'binderhub-build'})
-    cleanup()
-    request.addfinalizer(cleanup)
 
 
 @pytest.fixture
@@ -316,3 +335,8 @@ def always_build(app, request):
         patch = patch_provider(Provider)
         patch.start()
         request.addfinalizer(patch.stop)
+
+
+# skip_remote mark for tests that require local binder
+# e.g. patching config
+skip_remote = pytest.mark.skipif(REMOTE_BINDER, reason="requires local binder")

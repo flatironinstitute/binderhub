@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 
 from functools import wraps
@@ -7,6 +8,7 @@ from tornado.httpclient import AsyncHTTPClient
 from tornado.log import app_log
 
 from .base import BaseHandler
+from .utils import KUBE_REQUEST_TIMEOUT
 
 
 def retry(_f=None, *, delay=1, attempts=3):
@@ -46,13 +48,14 @@ def false_if_raises(f):
         try:
             res = await f(*args, **kwargs)
         except Exception as e:
+            app_log.exception(f"Error checking {f.__name__}")
             res = False
         return res
 
     return wrapper
 
 
-def at_most_every(_f=None, *, interval=10):
+def at_most_every(_f=None, *, interval=60):
     """Call the wrapped function at most every `interval` seconds.
 
     Useful when `f` is (very) expensive to compute and you are happy
@@ -60,15 +63,24 @@ def at_most_every(_f=None, *, interval=10):
     """
     last_time = time.monotonic() - interval - 1
     last_result = None
+    outstanding = None
 
     def caller(f):
         @wraps(f)
         async def wrapper(*args, **kwargs):
-            nonlocal last_time, last_result
+            nonlocal last_time, last_result, outstanding
+            if outstanding is not None:
+                # do not allow multiple concurrent calls, return an existing future
+                return await outstanding
             now = time.monotonic()
             if now > last_time + interval:
-                last_result = await f(*args, **kwargs)
-                last_time = now
+                outstanding = asyncio.ensure_future(f(*args, **kwargs))
+                try:
+                    last_result = await outstanding
+                finally:
+                    # complete, clear outstanding future and note the time
+                    outstanding = None
+                    last_time = time.monotonic()
             return last_result
 
         return wrapper
@@ -82,40 +94,51 @@ def at_most_every(_f=None, *, interval=10):
 class HealthHandler(BaseHandler):
     """Serve health status"""
 
+    # demote logging of 200 responses to debug-level
+    # to avoid flooding logs with health checks
+    log_success_debug = True
+
+    # Do not check request ip when getting health status
+    # we want to allow e.g. federation members to check each other's
+    # health, but not launch Binders
+    skip_check_request_ip = True
+
     def initialize(self, hub_url=None):
         self.hub_url = hub_url
 
     @at_most_every
     async def _get_pods(self):
         """Get information about build and user pods"""
-        app_log.info("Getting pod statistics")
+        namespace = self.settings["build_namespace"]
         k8s = self.settings["kubernetes_client"]
         pool = self.settings["executor"]
 
-        get_user_pods = asyncio.wrap_future(
-            pool.submit(
-                k8s.list_namespaced_pod,
-                self.settings["build_namespace"],
-                label_selector="app=jupyterhub,component=singleuser-server",
-            )
-        )
+        app_log.info(f"Getting pod statistics for {namespace}")
 
-        get_build_pods = asyncio.wrap_future(
-            pool.submit(
-                k8s.list_namespaced_pod,
-                self.settings["build_namespace"],
-                label_selector="component=binderhub-build",
+        label_selectors = [
+            "app=jupyterhub,component=singleuser-server",
+            "component=binderhub-build",
+        ]
+        requests = [
+            asyncio.wrap_future(
+                pool.submit(
+                    k8s.list_namespaced_pod,
+                    namespace,
+                    label_selector=label_selector,
+                    _preload_content=False,
+                    _request_timeout=KUBE_REQUEST_TIMEOUT,
+                )
             )
-        )
-
-        return await asyncio.gather(get_user_pods, get_build_pods)
+            for label_selector in label_selectors
+        ]
+        responses = await asyncio.gather(*requests)
+        return [json.loads(resp.read())["items"] for resp in responses]
 
     @false_if_raises
     @retry
     async def check_jupyterhub_api(self, hub_url):
         """Check JupyterHub API health"""
         await AsyncHTTPClient().fetch(hub_url + "hub/health", request_timeout=3)
-
         return True
 
     @false_if_raises
@@ -137,8 +160,8 @@ class HealthHandler(BaseHandler):
         """Compare number of active pods to available quota"""
         user_pods, build_pods = await self._get_pods()
 
-        n_user_pods = len(user_pods.items)
-        n_build_pods = len(build_pods.items)
+        n_user_pods = len(user_pods)
+        n_build_pods = len(build_pods)
 
         quota = self.settings["pod_quota"]
         total_pods = n_user_pods + n_build_pods
@@ -151,7 +174,12 @@ class HealthHandler(BaseHandler):
         }
         return usage
 
-    async def get(self):
+    async def check_all(self):
+        """Runs all health checks and returns a tuple (overall, checks).
+
+        `overall` is a bool representing the overall status of the service
+        `checks` contains detailed information on each check's result
+        """
         checks = []
         check_futures = []
 
@@ -177,6 +205,17 @@ class HealthHandler(BaseHandler):
             check["ok"] for check in checks if check["service"] != "Pod quota"
         )
         if not overall:
-            self.set_status(503)
+            unhealthy = [check for check in checks if not check["ok"]]
+            app_log.warning(f"Unhealthy services: {unhealthy}")
+        return overall, checks
 
+    async def get(self):
+        overall, checks = await self.check_all()
+        if not overall:
+            self.set_status(503)
         self.write({"ok": overall, "checks": checks})
+
+    async def head(self):
+        overall, checks = await self.check_all()
+        if not overall:
+            self.set_status(503)

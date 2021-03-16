@@ -62,7 +62,8 @@ function v2url(providerPrefix, repository, ref, path, pathType) {
 function updateRepoText() {
   var text;
   var provider = $("#provider_prefix").val();
-  var tag_text = "Git branch, tag, or commit";
+  var tag_text = "Git ref (branch, tag, or commit)";
+  var placeholder = "HEAD";
   // first enable branch/ref field, some providers later disable it
   $("#ref").prop("disabled", false);
   $("label[for=ref]").prop("disabled", false);
@@ -77,7 +78,6 @@ function updateRepoText() {
   }
   else if (provider === "git") {
     text = "Arbitrary git repository URL (http://git.example.com/repo)";
-    tag_text = "Git branch, tag, or commit SHA";
   }
   else if (provider === "zenodo") {
     text = "Zenodo DOI (10.5281/zenodo.3242074)";
@@ -89,13 +89,23 @@ function updateRepoText() {
     $("#ref").prop("disabled", true);
     $("label[for=ref]").prop("disabled", true);
   }
+  else if (provider === "hydroshare") {
+    text = "Hydroshare resource id or URL";
+    $("#ref").prop("disabled", true);
+    $("label[for=ref]").prop("disabled", true);
+  }
+  else if (provider === "dataverse") {
+    text = "Dataverse DOI (10.7910/DVN/TJCLKP)";
+    $("#ref").prop("disabled", true);
+    $("label[for=ref]").prop("disabled", true);
+  }
   else if (provider === "user") {
     text = "User";
     tag_text = "Project";
   }
   $("#repository").attr('placeholder', text);
   $("label[for=repository]").text(text);
-  $("#ref").attr('placeholder', tag_text);
+  $("#ref").attr('placeholder', placeholder);
   $("label[for=ref]").text(tag_text);
 }
 
@@ -115,8 +125,9 @@ function getBuildFormValues() {
     repo = encodeURIComponent(repo);
   }
 
-  var ref = $('#ref').val().trim() || 'master';
-  if (providerPrefix === 'zenodo' || providerPrefix === 'figshare') {
+  var ref = $('#ref').val().trim() || $("#ref").attr("placeholder");
+  if (providerPrefix === 'zenodo' || providerPrefix === 'figshare' || providerPrefix === 'dataverse' ||
+      providerPrefix === 'hydroshare') {
     ref = "";
   }
   var path = $('#filepath').val().trim();
@@ -156,7 +167,7 @@ function build(providerSpec, log, path, pathType) {
   var spec = providerSpec.slice(providerSpec.indexOf('/') + 1);
   // Update the text of the loading page if it exists
   if ($('div#loader-text').length > 0) {
-    $('div#loader-text p.launching').text("Starting repository: " + spec)
+    $('div#loader-text p.launching').text("Starting repository: " + decodeURIComponent(spec))
   }
 
   $('#build-progress .progress-bar').addClass('hidden');

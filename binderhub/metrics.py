@@ -5,6 +5,9 @@ import ipaddress
 
 
 class MetricsHandler(BaseHandler):
+    # demote logging of 200 responses to debug-level
+    log_success_debug = True
+
     async def get(self):
         allowed = self.settings.get('allowed_metrics_ips', set())
         if allowed:

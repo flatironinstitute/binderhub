@@ -1,10 +1,11 @@
 beautifulsoup4
+chartpress==1.0.*
+click
 codecov
 html5lib
+jupyterhub
 pytest
 pytest-asyncio
 pytest-cov
 requests
 ruamel.yaml>=0.15
-chartpress>=0.4.3,<0.5
-jupyterhub

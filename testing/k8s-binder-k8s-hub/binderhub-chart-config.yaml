@@ -1,0 +1,50 @@
+# This config is used when both BinderHub and the JupyterHub it uses are
+# deployed to a kubernetes cluster.
+cors:
+  allowOrigin: '*'
+
+service:
+  type: NodePort
+  nodePort: 30901
+
+config:
+  BinderHub:
+    # Use the internal host name for Pod to Pod communication
+    # We can't use `hub_url` here because that is set to localhost which
+    # works on the host but not from within a Pod
+    hub_url_local: http://proxy-public
+    use_registry: false
+    log_level: 10
+
+# NOTE: This is a mirror of the jupyterhub section in
+#       jupyterhub-chart-config.yaml in testing/local-binder-k8s-hub, keep these
+#       two files synced please.
+jupyterhub:
+  debug:
+    enabled: true
+
+  custom:
+    cors:
+      allowOrigin: "*"
+
+  hub:
+    # cookieSecret must be a hex encoded even length string
+    cookieSecret: "cccccccccc"
+    db:
+      type: "sqlite-memory"
+    services:
+      binder:
+        apiToken: "dummy-binder-secret-token"
+
+  proxy:
+    secretToken: "dummy-proxy-secret-token"
+    service:
+      type: NodePort
+      nodePorts:
+        http: 30902
+
+  singleuser:
+    storage:
+      type: none
+    memory:
+      guarantee: null

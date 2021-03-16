@@ -29,6 +29,9 @@
           Have a repository full of Jupyter notebooks? With Binder, open those notebooks in an executable environment, making your code immediately reproducible by anyone, anywhere.
         </div>
       </div>
+      <div id="tutorials" class="text-center">
+        <h4>New to Binder? Get started with a Zero-to-Binder tutorial in <a href="https://github.com/alan-turing-institute/the-turing-way/blob/master/workshops/boost-research-reproducibility-binder/workshop-presentations/zero-to-binder-julia.md">Julia</a>, <a href="https://github.com/alan-turing-institute/the-turing-way/blob/master/workshops/boost-research-reproducibility-binder/workshop-presentations/zero-to-binder-python.md">Python</a> or <a href="https://github.com/alan-turing-institute/the-turing-way/blob/master/workshops/boost-research-reproducibility-binder/workshop-presentations/zero-to-binder-r.md">R</a>.</h4>
+      </div>
       {% endblock header %}
 
       {% block form %}
@@ -55,6 +58,8 @@
                 <li class="dropdown-item" value="git"><a href="#">Git repository</a></li>
                 <li class="dropdown-item" value="zenodo"><a href="#">Zenodo DOI</a></li>
                 <li class="dropdown-item" value="figshare"><a href="#">Figshare DOI</a></li>
+                <li class="dropdown-item" value="hydroshare"><a href="#">Hydroshare resource</a></li>
+                <li class="dropdown-item" value="dataverse"><a href="#">Dataverse DOI</a></li>
               </ul>
             </div>
             <input class="form-control" type="text" id="repository" data-lpignore="true" placeholder="GitHub repository name or link"/>
@@ -136,7 +141,7 @@
 
         <div id="build-progress" class="progress on-build hidden row">
           <div id="phase-failed" class="progress-bar progress-bar-danger progress-bar-striped hidden" style="width: 100%">
-            Failed
+            Failed. Try refreshing this page in a few seconds.
           </div>
           <div id="phase-waiting" class="progress-bar progress-bar-danger progress-bar-striped active hidden" style="width: 10%">
             Waiting

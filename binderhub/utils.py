@@ -1,8 +1,18 @@
 """Miscellaneous utilities"""
 from collections import OrderedDict
 from hashlib import blake2b
+import ipaddress
+import time
 
 from traitlets import Integer, TraitError
+
+
+# default _request_timeout for kubernetes api requests
+# tuple of two timeouts: (connect_timeout, read_timeout)
+# the most important of these is the connect_timeout,
+# which can hang for a *very* long time when there are internal
+# kubernetes connection issues
+KUBE_REQUEST_TIMEOUT = (3, 30)
 
 
 def blake2b_hash_as_int(b):
@@ -88,15 +98,28 @@ class ByteSpecification(Integer):
 class Cache(OrderedDict):
     """Basic LRU Cache with get/set"""
 
-    def __init__(self, max_size=1024):
+    def __init__(self, max_size=1024, max_age=0):
         self.max_size = max_size
+        self.max_age = max_age
+        self._ages = {}
+
+    def _now(self):
+        return time.perf_counter()
+
+    def _check_expired(self, key):
+        if not self.max_age:
+            return False
+        if self._ages[key] + self.max_age < self._now():
+            self.pop(key)
+            return True
+        return False
 
     def get(self, key, default=None):
         """Get an item from the cache
 
         same as dict.get
         """
-        if key in self:
+        if key in self and not self._check_expired(key):
             self.move_to_end(key)
         return super().get(key, default)
 
@@ -107,10 +130,16 @@ class Cache(OrderedDict):
         - if full, delete the oldest item
         """
         self[key] = value
+        self._ages[key] = self._now()
         self.move_to_end(key)
         if len(self) > self.max_size:
             first_key = next(iter(self))
             self.pop(first_key)
+
+    def pop(self, key):
+        result = super().pop(key)
+        self._ages.pop(key)
+        return result
 
 
 def url_path_join(*pieces):
@@ -134,6 +163,35 @@ def url_path_join(*pieces):
         result = "/"
 
     return result
+
+
+def ip_in_networks(ip, networks, min_prefix_len=1):
+    """Return whether `ip` is in the dict of networks
+
+    This is O(1) regardless of the size of networks
+
+    Implementation based on netaddr.IPSet.__contains__
+
+    Repeatedly checks if ip/32; ip/31; ip/30; etc. is in networks
+    for all netmasks that match the given ip,
+    for a max of 32 dict key lookups for ipv4.
+
+    If all netmasks have a prefix length of e.g. 24 or greater,
+    min_prefix_len prevents checking wider network masks that can't possibly match.
+
+    Returns `(netmask, networks[netmask])` for matching netmask
+    in networks, if found; False, otherwise.
+    """
+    if min_prefix_len < 1:
+        raise ValueError(f"min_prefix_len must be >= 1, got {min_prefix_len}")
+    if not networks:
+        return False
+    check_net = ipaddress.ip_network(ip)
+    while check_net.prefixlen >= min_prefix_len:
+        if check_net in networks:
+            return check_net, networks[check_net]
+        check_net = check_net.supernet(1)
+    return False
 
 
 # FIXME: remove when instantiating a kubernetes client

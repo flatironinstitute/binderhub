@@ -1,5 +1,5 @@
-Administrators and developers
-=============================
+Technical Reference
+===================
 
 A more detailed overview of the BinderHub design, architecture, and functionality.
 
@@ -10,4 +10,5 @@ A more detailed overview of the BinderHub design, architecture, and functionalit
    ../overview
    ../eventlogging
    ../api
+   repoproviders
    ../reference/ref-index.rst

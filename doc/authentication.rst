@@ -17,24 +17,15 @@ you need to add the following into ``config.yaml``:
       cull:
         # don't cull authenticated users
         users: False
-
+      custom:
+        binderauth_enabled: true
       hub:
         redirectToServer: false
         services:
           binder:
+            oauth_no_confirm: true
             oauth_redirect_uri: "http://<binderhub_url>/oauth_callback"
             oauth_client_id: "binder-oauth-client-test"
-        extraConfig:
-          binder: |
-            from kubespawner import KubeSpawner
-
-            class BinderSpawner(KubeSpawner):
-              def start(self):
-                  if 'image' in self.user_options:
-                    # binder service sets the image spec via user options
-                    self.image = self.user_options['image']
-                  return super().start()
-            c.JupyterHub.spawner_class = BinderSpawner
 
       singleuser:
         # to make notebook servers aware of hub
@@ -75,9 +66,6 @@ you have to enable named servers on JupyterHub:
 
 .. code:: yaml
 
-    config:
-      BinderHub:
-        use_named_servers: true
     jupyterhub:
       hub:
         allowNamedServers: true

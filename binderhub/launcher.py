@@ -14,7 +14,9 @@ from tornado.log import app_log
 from tornado import web, gen
 from tornado.httpclient import AsyncHTTPClient, HTTPRequest, HTTPError
 from traitlets.config import LoggingConfigurable
-from traitlets import Integer, Unicode, Bool
+from traitlets import Integer, Unicode, Bool, default
+from jupyterhub.traitlets import Callable
+from jupyterhub.utils import maybe_future
 
 # pattern for checking if it's an ssh repo and not a URL
 # used only after verifying that `://` is not present
@@ -32,7 +34,22 @@ class Launcher(LoggingConfigurable):
 
     hub_api_token = Unicode(help="The API token for the Hub")
     hub_url = Unicode(help="The URL of the Hub")
+    hub_url_local = Unicode(help="The internal URL of the Hub if different")
+    @default('hub_url_local')
+    def _default_hub_url_local(self):
+        return self.hub_url
     create_user = Bool(True, help="Create a new Hub user")
+    allow_named_servers = Bool(
+        os.getenv('JUPYTERHUB_ALLOW_NAMED_SERVERS', "false") == "true",
+        config=True,
+        help="Named user servers are allowed. This is used only when authentication is enabled and "
+             "to set unique names for user servers."
+    )
+    named_server_limit_per_user = Integer(
+        int(os.getenv('JUPYTERHUB_NAMED_SERVER_LIMIT_PER_USER', 0)),
+        config=True,
+        help="""Maximum number of concurrent named servers that can be created by a user."""
+    )
     retries = Integer(
         4,
         config=True,
@@ -51,12 +68,24 @@ class Launcher(LoggingConfigurable):
         Time is scaled exponentially by the retry attempt (i.e. 2, 4, 8, 16 seconds)
         """
     )
+    pre_launch_hook = Callable(
+        None,
+        config=True,
+        allow_none=True,
+        help="""
+        An optional hook function that you can use to implement checks before starting a user's server. 
+        For example if you have a non-standard BinderHub deployment, 
+        in this hook you can check if the current user has right to launch a new repo.
+        
+        Receives 5 parameters: launcher, image, username, server_name, repo_url
+        """
+    )
 
     async def api_request(self, url, *args, **kwargs):
         """Make an API request to JupyterHub"""
         headers = kwargs.setdefault('headers', {})
         headers.update({'Authorization': 'token %s' % self.hub_api_token})
-        hub_api_url = os.getenv('JUPYTERHUB_API_URL', '') or self.hub_url + 'hub/api/'
+        hub_api_url = os.getenv('JUPYTERHUB_API_URL', '') or self.hub_url_local + 'hub/api/'
         request_url = hub_api_url + url
         req = HTTPRequest(request_url, *args, **kwargs)
         retry_delay = self.retry_delay
@@ -117,7 +146,7 @@ class Launcher(LoggingConfigurable):
         # add a random suffix to avoid collisions for users on the same image
         return '{}-{}'.format(prefix, ''.join(random.choices(SUFFIX_CHARS, k=SUFFIX_LENGTH)))
 
-    async def launch(self, image, username, server_name='', repo_url='', options=None):
+    async def launch(self, image, username, server_name='', repo_url='', extra_args=None):
         """Launch a server for a given image
 
         - creates a temporary user on the Hub if authentication is not enabled
@@ -127,6 +156,7 @@ class Launcher(LoggingConfigurable):
           - `url`: the URL of the server
           - `image`: image spec
           - `repo_url`: the url of the repo
+          - `extra_args`: Dictionary of extra arguments passed to the server
           - `token`: the token for the server
         """
         # TODO: validate the image argument?
@@ -151,14 +181,30 @@ class Launcher(LoggingConfigurable):
             user_data = await self.get_user_data(username)
             if server_name in user_data['servers']:
                 raise web.HTTPError(409, "User %s already has a running server." % username)
+        elif self.named_server_limit_per_user > 0:
+            # authentication is enabled with named servers
+            # check if user has already reached to the limit of named servers
+            user_data = await self.get_user_data(username)
+            len_named_spawners = len([s for s in user_data['servers'] if s != ''])
+            if self.named_server_limit_per_user <= len_named_spawners:
+                raise web.HTTPError(
+                    409,
+                    "User {} already has the maximum of {} named servers."
+                    "  One must be deleted before a new server can be created".format(
+                        username, self.named_server_limit_per_user
+                    ),
+                )
+
+        if self.pre_launch_hook:
+            await maybe_future(self.pre_launch_hook(self, image, username, server_name, repo_url))
 
         # data to be passed into spawner's user_options during launch
         # and also to be returned into 'ready' state
         data = {'image': image,
                 'repo_url': repo_url,
                 'token': base64.urlsafe_b64encode(uuid.uuid4().bytes).decode('ascii').rstrip('=\n')}
-        if options:
-            data.update(options)
+        if extra_args:
+            data.update(extra_args)
 
         # server name to be used in logs
         _server_name = " {}".format(server_name) if server_name else ''

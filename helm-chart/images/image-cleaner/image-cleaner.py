@@ -20,6 +20,25 @@ logging.basicConfig(format='%(asctime)s %(message)s',
                     level=logging.INFO)
 
 
+annotation_key = "hub.jupyter.org/image-cleaner-cordoned"
+
+
+def get_absolute_size(path):
+    """
+    Directory size in bytes
+    """
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for fname in filenames:
+            f = os.path.join(dirpath, fname)
+            # some files are links, skip them as they don't use
+            # up additional space
+            if os.path.isfile(f):
+                total += os.path.getsize(f)
+
+    return total
+
+
 def get_used_percent(path):
     """
     Return disk usage as a percentage
@@ -75,9 +94,16 @@ def get_docker_images(client):
 
 def cordon(kube, node):
     """cordon a kubernetes node"""
+    logging.info(f"Cordoning node {node}")
     kube.patch_node(
         node,
         {
+            # record that we are the one responsible for cordoning
+            "metadata": {
+                "annotations": {
+                    annotation_key: "true",
+                },
+            },
             "spec": {
                 "unschedulable": True,
             },
@@ -87,9 +113,17 @@ def cordon(kube, node):
 
 def uncordon(kube, node):
     """uncordon a kubernetes node"""
+    logging.info(f"Uncordoning node {node}")
     kube.patch_node(
         node,
         {
+            # clear annotation since we're no longer the reason for cordoning,
+            # if the node ever does become cordoned
+            "metadata": {
+                "annotations": {
+                    annotation_key: None,
+                },
+            },
             "spec": {
                 "unschedulable": False,
             },
@@ -108,11 +142,17 @@ def main():
             kubernetes.config.load_kube_config()
         kube = kubernetes.client.CoreV1Api()
         # verify that we can talk to the node
-        kube.read_node(node)
+        node_info = kube.read_node(node)
+        # recover from possible crash!
+        if node_info.spec.unschedulable and node_info.metadata.annotations.get(annotation_key):
+            logging.warning(f"Node {node} still cordoned, possibly leftover from earlier crash of image-cleaner")
+            uncordon(kube, node)
+
 
     path_to_check = os.getenv('PATH_TO_CHECK', '/var/lib/docker')
     interval = float(os.getenv('IMAGE_GC_INTERVAL', '300'))
     delay = float(os.getenv('IMAGE_GC_DELAY', '1'))
+    gc_threshold_type = os.getenv('IMAGE_GC_THRESHOLD_TYPE', 'relative')
     gc_low = float(os.getenv('IMAGE_GC_THRESHOLD_LOW', '60'))
     gc_high = float(os.getenv('IMAGE_GC_THRESHOLD_HIGH', '80'))
 
@@ -121,9 +161,21 @@ def main():
     client = docker.from_env(version='auto')
     images = get_docker_images(client)
 
+    # with the threshold type set to relative the thresholds are interpreted
+    # as a percentage of how full the partition is. In absolute mode the
+    # thresholds are interpreted as size in bytes. By default you should use
+    # "relative" mode. Use "absolute" mode when you are using DIND and your
+    # nodes only have one partition.
+    if gc_threshold_type == "relative":
+        get_used = get_used_percent
+        used_msg = '{used:.1f}% used'
+    else:
+        get_used = get_absolute_size
+        used_msg = '{used}bytes used'
+
     while True:
-        used = get_used_percent(path_to_check)
-        logging.info(f'{used:.1f}% used')
+        used = get_used(path_to_check)
+        logging.info(used_msg.format(used=used))
         if used < gc_high:
             # Do nothing! We have enough space
             pass
@@ -140,15 +192,13 @@ def main():
             images_before = len(images)
 
             if node:
-                logging.info(f"Cordoning node {node}")
                 cordon(kube, node)
 
             deleted = 0
 
-            while images and get_used_percent(path_to_check) > gc_low:
+            while images and get_used(path_to_check) > gc_low:
                 # Ensure the node is still cordoned
                 if node:
-                    logging.info(f"Cordoning node {node}")
                     cordon(kube, node)
                 # Remove biggest image
                 image = images.pop(0)
@@ -174,16 +224,23 @@ def main():
                     elif e.status_code == 404:
                         logging.info(f'{name} not found, probably already deleted')
                     else:
+                        if node:
+                            # uncordon before giving up
+                            uncordon(kube, node)
                         raise
                 except requests.exceptions.ReadTimeout:
                     logging.warning(f'Timeout removing {name}')
                     # Delay longer after a timeout, which indicates that Docker is overworked
                     time.sleep(max(delay, 30))
+                except Exception:
+                    if node:
+                        # uncordon before giving up
+                        uncordon(kube, node)
+                    raise
                 else:
                     deleted += 1
 
             if node:
-                logging.info(f"Uncordoning node {node}")
                 uncordon(kube, node)
 
             # log what we did and how long it took
