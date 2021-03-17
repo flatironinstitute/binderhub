@@ -549,11 +549,21 @@ class BuildHandler(BaseHandler):
                 server_name = ''
             try:
                 extra_args = {
-                    'binder_ref_url': self.ref_url,
-                    'binder_launch_host': self.binder_launch_host,
-                    'binder_request': self.binder_request,
-                    'binder_persistent_request': self.binder_persistent_request,
+                    'environment': {},
+                    'extra_annotations': {
+                        'binder.jupyter.org/provider': provider.name,
+                        'binder.jupyter.org/spec': provider.spec,
+                    }
                 }
+                for k,v in {
+                        'repo_url': self.ref_url,
+                        'ref_url': self.ref_url,
+                        'launch_host': self.binder_launch_host,
+                        'request': self.binder_request,
+                        'persistent_request': self.binder_persistent_request
+                    }.items():
+                    extra_args['environment']['BINDER_'+k.upper()] = v
+                    extra_args['extra_annotations']['binder.jupyter.org/'+k] = v
                 extra_args.update(self.launch_options)
                 server_info = await launcher.launch(image=self.image_name,
                                                     username=username,

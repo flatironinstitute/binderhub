@@ -1149,8 +1149,7 @@ class CuratedRepoProvider(RepoProvider):
 
     def get_launch_options(self):
         options = {'volumes': [], 'volume_mounts': [],
-                'extra_labels': {'specuser': self.specuser},
-                'extra_annotations': {'binder.jupyter.org/spec': self.spec}
+                'extra_labels': {'specuser': self.specuser}
             }
         options.update(self.default_options)
         for idx, (mount, path) in enumerate(self.mounts.items(), 1):

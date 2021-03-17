@@ -107,21 +107,13 @@ jupyterhub:
                     if 'image' not in self.user_options:
                         raise web.HTTPError(400, "image required")
                 for k, v in self.user_options.items():
+                    if k in ('volumes', 'envionment', 'extra_labels', 'extra_annotations'):
+                        # preserve any existing settings
+                        o = getattr(self, k).copy()
+                        o.extend(v)
+                        v = o
                     setattr(self, k, v)
                 return super().start()
-
-            def get_env(self):
-                env = super().get_env()
-                if 'repo_url' in self.user_options:
-                    env['BINDER_REPO_URL'] = self.user_options['repo_url']
-                for key in (
-                        'binder_ref_url',
-                        'binder_launch_host',
-                        'binder_persistent_request',
-                        'binder_request'):
-                    if key in self.user_options:
-                        env[key.upper()] = self.user_options[key]
-                return env
 
         c.JupyterHub.spawner_class = BinderSpawner
     services:
