@@ -192,10 +192,11 @@ jupyterhub:
 
         class Monitor(object):
             def collect(self):
-                run = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_servers', 'Running binderhub jupyter servers', labels=['user','spec'])
+                l = ['user','specuser','specproj']
+                run = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_servers', 'Running binderhub jupyter servers', labels=l)
                 mets = [run]
-                cpu = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_cpu', 'Running binderhub jupyter servers cpu usage', labels=['user','spec'])
-                mem = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_memory', 'Running binderhub jupyter servers memory usage', labels=['user','spec'])
+                cpu = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_cpu', 'Running binderhub jupyter servers cpu usage', labels=l)
+                mem = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_memory', 'Running binderhub jupyter servers memory usage', labels=l)
                 pods = KubeSpawner.reflectors['pods']
                 if not pods: return []
                 try:
@@ -208,7 +209,12 @@ jupyterhub:
                     # assuming (max) one per user
                     meta = pod['metadata']
                     annot = meta['annotations']
-                    l = [annot['hub.jupyter.org/username'], annot['binder.jupyter.org/spec']]
+                    l = []
+                    try:
+                        l.append(annot['hub.jupyter.org/username'])
+                        l.extend(annot['binder.jupyter.org/spec'].split('/', 1))
+                    except KeyError:
+                        pass
                     run.add_metric(l, 1)
                     if not api:
                         continue
@@ -237,6 +243,7 @@ jupyterhub:
                     if not any(ip in a for a in allowed):
                         raise web.HTTPError(403)
                 self.set_header('Content-Type', prometheus_client.CONTENT_TYPE_LATEST)
+                self.write(prometheus_client.generate_latest(prometheus_client.REGISTRY))
                 self.write(prometheus_client.generate_latest(registry))
 
         c.JupyterHub.extra_handlers.append((r'/monitor$', MonitorHandler))
