@@ -234,7 +234,7 @@ jupyterhub:
         registry = prometheus_client.CollectorRegistry(auto_describe=True)
         registry.register(Monitor())
         # TODO make configurable:
-        allowed = list(map(ipaddress.ip_network, ['10.0.0.0/8', '172.17.0.1']))
+        allowed = list(map(ipaddress.ip_network, ['10.128.0.0/16', '172.17.0.1']))
 
         class MonitorHandler(BaseHandler):
             async def get(self):
