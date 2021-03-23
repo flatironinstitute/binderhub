@@ -112,16 +112,28 @@ jupyterhub:
                         raise web.HTTPError(400, "image required")
 
                 for k, v in self.user_options.items():
-                    o = getattr(self, k, None)
-                    if isinstance(o, dict):
-                        o = o.copy()
-                        o.update(v)
-                        v = o
-                    elif isinstance(o, list):
-                        o = o.copy()
-                        o.extend(v)
-                        v = o
-                    setattr(self, k, v)
+                    try:
+                        o = getattr(self, k)
+                        self.log.debug("BinderSpawner user_options %s: %s -> %s", k, o, v)
+                        if isinstance(o, dict):
+                            c = o.copy()
+                            c.update(v)
+                            v = c
+                        elif isinstance(o, list):
+                            if k in ('volumes','volume_mounts'):
+                                # hack for volumes coming from I don't know where
+                                c = [x for x in o if x['name'] == 'user-mount']
+                                if len(c) > 1:
+                                    c = c[:1]
+                                #v = [y for y in v if y['name'] != 'user-mount']
+                            else:
+                                c = o.copy()
+                            c.extend(v)
+                            v = c
+                        self.log.debug("BinderSpawner user_options %s: %s -> %s", k, o, v)
+                        setattr(self, k, v)
+                    except AttributeError:
+                        pass
                 return super().start()
 
         c.JupyterHub.spawner_class = BinderSpawner

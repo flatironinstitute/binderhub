@@ -100,7 +100,7 @@ function updateRepoText() {
     $("label[for=ref]").prop("disabled", true);
   }
   else if (provider === "user") {
-    text = "User";
+    text = "Owner";
     tag_text = "Project";
     placeholder = "project";
   }
