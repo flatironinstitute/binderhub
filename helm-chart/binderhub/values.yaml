@@ -202,20 +202,29 @@ jupyterhub:
         from kubernetes.client.exceptions import ApiException
         from kubernetes.utils import parse_quantity
 
+        import z2jh
+        allowed = list(map(ipaddress.ip_network, z2jh.get_config('custom.allowed_monitor_ips', [])))
+
         class Monitor(object):
             def collect(self):
-                l = ['user','specuser','specproj']
-                run = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_servers', 'Running binderhub jupyter servers', labels=l)
-                mets = [run]
-                cpu = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_cpu', 'Running binderhub jupyter servers cpu usage', labels=l)
-                mem = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_memory', 'Running binderhub jupyter servers memory usage', labels=l)
                 pods = KubeSpawner.reflectors['pods']
                 if not pods: return []
                 try:
                     api = DynamicClient(shared_client('ApiClient')).resources.get(api_version='metrics.k8s.io/v1beta1', kind='PodMetrics')
-                    mets.extend([cpu, mem])
                 except ResourceNotFoundError:
                     api = None
+
+                l = ['user','specuser','specproj']
+                run = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_servers', 'Running binderhub jupyter servers', labels=l)
+                mets = [run]
+                resources = {'cpu':{},'memory':{}}
+                for r,m in resources.items():
+                    for t in ('request','limit'):
+                        m[t] = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_'+r+'_'+t, 'Running binderhub jupyter servers '+r+' '+t, labels=l)
+                        mets.append(m[t])
+                    if api:
+                        m['usage'] = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_'+r, 'Running binderhub jupyter servers '+r+' usage', labels=l)
+                        mets.append(m['usage'])
 
                 for pod in pods.pods.values():
                     # assuming (max) one per user
@@ -228,6 +237,10 @@ jupyterhub:
                     except KeyError:
                         pass
                     run.add_metric(l, 1)
+                    for r,m in resources.items():
+                        for t in ('request','limit'):
+                            m[t].add_metric(l, sum(parse_quantity(c.get('resources',{}).get(t+'s',{}).get(r,0)) for c in pod['spec']['containers']))
+
                     if not api:
                         continue
                     try:
@@ -238,15 +251,17 @@ jupyterhub:
                     if ts.endswith('Z'):
                         ts = ts[:-1]+'+00:00'
                     ts = datetime.datetime.fromisoformat(ts).timestamp()
-                    cpu.add_metric(l, sum(parse_quantity(c.usage.cpu) for c in res.containers), timestamp=ts)
-                    mem.add_metric(l, sum(parse_quantity(c.usage.memory) for c in res.containers), timestamp=ts)
+                    for r,m in resources.items():
+                        print(r)
+                        print(m['usage'])
+                        print(res.containers[0].usage)
+                        print(res.containers[0].usage[r])
+                        m['usage'].add_metric(l, sum(parse_quantity(getattr(c.usage,r)) for c in res.containers), timestamp=ts)
 
                 return mets
 
         registry = prometheus_client.CollectorRegistry(auto_describe=True)
         registry.register(Monitor())
-        # TODO make configurable:
-        allowed = list(map(ipaddress.ip_network, ['10.128.0.0/16', '172.17.0.1']))
 
         class MonitorHandler(BaseHandler):
             async def get(self):
