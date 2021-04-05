@@ -252,10 +252,6 @@ jupyterhub:
                         ts = ts[:-1]+'+00:00'
                     ts = datetime.datetime.fromisoformat(ts).timestamp()
                     for r,m in resources.items():
-                        print(r)
-                        print(m['usage'])
-                        print(res.containers[0].usage)
-                        print(res.containers[0].usage[r])
                         m['usage'].add_metric(l, sum(parse_quantity(getattr(c.usage,r)) for c in res.containers), timestamp=ts)
 
                 return mets
