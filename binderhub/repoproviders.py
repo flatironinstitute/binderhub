@@ -1067,8 +1067,9 @@ class CuratedRepoProvider(RepoProvider):
     labels = {
         "text": "Owner",
         "tag_text": "Project",
-        "ref_prop_disabled": True,
-        "label_prop_disabled": True,
+        "tag_placeholder": "environment/name",
+        "ref_prop_disabled": False,
+        "label_prop_disabled": False,
     }
 
     config_path = Unicode(
