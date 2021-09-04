@@ -313,6 +313,9 @@ dind:
       tag: 19.03.5-dind
     # Additional command line arguments to pass to dockerd
     extraArgs: []
+    lifecycle: {}
+    extraVolumes: []
+    extraVolumeMounts: []
   storageDriver: overlay2
   resources: {}
   hostSocketDir: /var/run/dind
@@ -323,7 +326,6 @@ imageCleaner:
   image:
     name: jupyterhub/k8s-image-cleaner
     tag: 'local'
-    repository: jupyterhub/k8s-image-cleaner
   # delete an image at most every 5 seconds
   delay: 5
   # Interpret threshold values as percentage or bytes
@@ -358,7 +360,8 @@ ingress:
     #     - chart-example.local
 
 initContainers: []
+lifecycle: {}
 extraVolumes: []
 extraVolumeMounts: []
-extraEnv: []
+extraEnv: {}
 podAnnotations: {}

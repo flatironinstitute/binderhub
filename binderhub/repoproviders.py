@@ -17,6 +17,7 @@ import re
 import subprocess
 import string
 import yaml
+from urllib.parse import urlparse
 
 import escapism
 from prometheus_client import Gauge
@@ -35,6 +36,7 @@ from .utils import Cache
 
 GITHUB_RATE_LIMIT = Gauge('binderhub_github_rate_limit_remaining', 'GitHub rate limit remaining')
 SHA1_PATTERN = re.compile(r'[0-9a-f]{40}')
+GIT_SSH_PATTERN = re.compile(r"([\w\-]+@[\w\-\.]+):(.+)", re.IGNORECASE)
 
 
 def tokenize_spec(spec):
@@ -201,6 +203,12 @@ class RepoProvider(LoggingConfigurable):
 class FakeProvider(RepoProvider):
     """Fake provider for local testing of the UI
     """
+    labels = {
+        "text": "Fake Provider",
+        "tag_text": "Fake Ref",
+        "ref_prop_disabled": True,
+        "label_prop_disabled": True,
+    }
 
     async def get_resolved_ref(self):
         return "1a2b3c4d5e6f"
@@ -474,13 +482,40 @@ class GitRepoProvider(RepoProvider):
         "label_prop_disabled": False,
     }
 
+    allowed_protocols = Set(
+        Unicode(),
+        default_value={
+            "http",
+            "https",
+            "git",
+            "ssh",
+        },
+        config=True,
+        help="""Specify allowed git protocols. Default: http[s], git, ssh.""",
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.url, unresolved_ref = self.spec.split('/', 1)
-        self.repo = urllib.parse.unquote(self.url)
+        self.escaped_url, unresolved_ref = self.spec.split("/", 1)
+        self.repo = urllib.parse.unquote(self.escaped_url)
+
+        # handle `git@github.com:path` git ssh url, map to standard url format
+        ssh_match = GIT_SSH_PATTERN.match(self.repo)
+        if ssh_match:
+            user_host, path = ssh_match.groups()
+            self.repo = f"ssh://{user_host}/{path}"
+
+        proto = urlparse(self.repo).scheme
+        if proto not in self.allowed_protocols:
+            raise ValueError(
+                f"Unsupported git url {self.repo}, protocol {proto} not in {', '.join(self.allowed_protocols)}"
+            )
+
         self.unresolved_ref = urllib.parse.unquote(unresolved_ref)
         if not self.unresolved_ref:
-            raise ValueError("`unresolved_ref` must be specified as a query parameter for the basic git provider")
+            raise ValueError(
+                "`unresolved_ref` must be specified in the url for the basic git provider"
+            )
 
     async def get_resolved_ref(self):
         if hasattr(self, 'resolved_ref'):
@@ -491,7 +526,7 @@ class GitRepoProvider(RepoProvider):
             self.sha1_validate(self.unresolved_ref)
         except ValueError:
             # The ref is a head/tag and we resolve it using `git ls-remote`
-            command = ["git", "ls-remote", self.repo, self.unresolved_ref]
+            command = ["git", "ls-remote", "--", self.repo, self.unresolved_ref]
             result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if result.returncode:
                 raise RuntimeError("Unable to run git ls-remote to get the `resolved_ref`: {}".format(result.stderr))
@@ -509,7 +544,7 @@ class GitRepoProvider(RepoProvider):
     async def get_resolved_spec(self):
         if not hasattr(self, 'resolved_ref'):
             self.resolved_ref = await self.get_resolved_ref()
-        return f"{self.url}/{self.resolved_ref}"
+        return f"{self.escaped_url}/{self.resolved_ref}"
 
     def get_repo_url(self):
         return self.repo

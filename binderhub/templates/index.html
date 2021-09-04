@@ -4,17 +4,6 @@
 <meta id="base-url" data-url="{{base_url}}">
 <meta id="badge-base-url" data-url="{{badge_base_url}}">
 <script src="{{static_url("dist/bundle.js")}}"></script>
-
-
-<!-- Social media previews -->
-<meta property="og:title" content="The Binder Project">
-<meta property="og:image" content="https://mybinder.org/static/images/logo_social.png">
-<meta property="og:description" content="Reproducible, sharable, interactive computing environments.">
-<meta property="og:image:width" content="1334">
-<meta property="og:image:height" content="700">
-<meta property="og:image:alt" content="The Binder Project Logo" />
-<meta name="twitter:card" content="summary_large_image">
-
 {{ super() }}
 {% endblock head %}
 
@@ -110,7 +99,7 @@
 
         <div class="badges row">
             <div class="dropdownmenu" id="toggle-badge-snippet">
-              <label>Copy the text below, then paste into your README to show a binder badge: <img id="badge" src="{{static_url("images/badge_logo.svg")}}"></label>
+              <label>Expand to see the text below, paste it into your README to show a binder badge: <img id="badge" src="{{static_url("images/badge_logo.svg")}}"></label>
               <a id="badge-link"></a>
               <a href="#" title="show badge snippets"><span id="badge-snippet-caret" class="glyphicon glyphicon-triangle-right"></span></a>
             </div>
@@ -159,7 +148,8 @@
         <div id="log-container" class="panel panel-default on-build hidden row">
           <div id="toggle-logs" class="panel-heading">
             Build logs
-            <button type="button" class="btn btn-link btn-xs pull-right">show</button>
+            <button type="button" class="btn btn-link btn-xs pull-right toggle">show</button>
+            <a id="view-raw-logs" class="btn btn-link btn-xs pull-right" target="_blank">view raw</a>
           </div>
           <div class="panel-body hidden">
             <div id="log"></div>
