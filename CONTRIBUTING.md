@@ -97,6 +97,9 @@ user interface of those parts as BinderHub is configured to fake those actions.
 You can tell you are using the fake builder and launcher from the fact that the
 build will never complete.
 
+We use [eslint](https://eslint.org/) to catch errors in our JS, and you can
+run it locally with `npm run lint`.
+
 To learn how to set yourself with a BinderHub development environment that lets
 you modify the builder and launcher refer to [Develop Kubernetes
 integration](#develop-kubernetes-integration) or [Develop Helm
@@ -211,7 +214,7 @@ continue.
    helm template --validate binderhub-test helm-chart/binderhub \
       --values testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
       --set config.BinderHub.hub_url=http://$(minikube ip):30902 \
-      --set config.BinderHub.access_token=$GITHUB_ACCESS_TOKEN
+      --set config.GitHubRepoProvider.access_token=$GITHUB_ACCESS_TOKEN
    ```
 
    If the validation succeeds, go ahead and upgrade/install the Helm chart.
@@ -222,7 +225,7 @@ continue.
    helm upgrade --install binderhub-test helm-chart/binderhub \
       --values testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
       --set config.BinderHub.hub_url=http://$(minikube ip):30902 \
-      --set config.BinderHub.access_token=$GITHUB_ACCESS_TOKEN
+      --set config.GitHubRepoProvider.access_token=$GITHUB_ACCESS_TOKEN
 
    echo "BinderHub inside the Minikube based Kubernetes cluster is starting up at http://$(minikube ip):30901"
    ```
@@ -350,7 +353,7 @@ tests. You can get some hints on what tests to run and how by inspecting
   GitHub API.
 
 ### Pytest marks labelling tests
-- `remote`: Tests for them the BinderHub is already running somewhere.
+- `remote`: Tests for when BinderHub is already running somewhere.
 - `github_api`: Tests that communicate with the GitHub API a lot.
 - `auth`: Tests related to BinderHub's usage of JupyterHub as an OAuth2 Identity
   Provider (IdP) for non public access.
@@ -380,9 +383,8 @@ to prepare for breaking changes associated with the version bump.
 
 * update/close the `CHANGES.md` for this release (see below)
 * create a git tag for the release
-* `pip install twine`
-* `python setup.py sdist`
-* `python setup.py bdist_wheel`
+* `pip install build twine`
+* `python -mbuild .`
 * `twine check dist/*` to check the README parses on PyPI
 * edit `$HOME/.pypirc` to use the binder team account
 * `twine upload dist/*`
@@ -396,7 +398,7 @@ PyPI](https://packaging.python.org/guides/distributing-packages-using-setuptools
 
 As BinderHub does not have a typical semver release schedule, we try to
 update the changelog in `CHANGES.md` every three months. A useful tool
-for this [can be found here](https://github.com/choldgraf/github-activity).
+for this [can be found here](https://github.com/executablebooks/github-activity).
 If you choose to use this tool, the command that generated current sections
 in the changelog is below:
 

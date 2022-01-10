@@ -174,25 +174,34 @@ class Build:
 
         self._component_label = "binderhub-build"
 
+    def get_r2d_cmd_options(self):
+        """Get options/flags for repo2docker"""
+        r2d_options = [
+            f"--ref={self.ref}",
+            f"--image={self.image_name}",
+            "--no-clean",
+            "--no-run",
+            "--json-logs",
+            "--user-name=jovyan",
+            "--user-id=1000",
+        ]
+        if self.appendix:
+            r2d_options.extend(['--appendix', self.appendix])
+
+        if self.push_secret:
+            r2d_options.append('--push')
+
+        if self.memory_limit:
+            r2d_options.append('--build-memory-limit')
+            r2d_options.append(str(self.memory_limit))
+
+        return r2d_options
+
     def get_cmd(self):
         """Get the cmd to run to build the image"""
         cmd = [
             'jupyter-repo2docker',
-            '--ref', self.ref,
-            '--image', self.image_name,
-            '--no-clean', '--no-run', '--json-logs',
-            '--user-name', 'jovyan',
-            '--user-id', '1000',
-        ]
-        if self.appendix:
-            cmd.extend(['--appendix', self.appendix])
-
-        if self.push_secret:
-            cmd.append('--push')
-
-        if self.memory_limit:
-            cmd.append('--build-memory-limit')
-            cmd.append(str(self.memory_limit))
+        ] + self.get_r2d_cmd_options()
 
         # repo_url comes at the end, since otherwise our arguments
         # might be mistook for commands to run.
@@ -410,7 +419,7 @@ class Build:
         )
 
         try:
-            ret = self.api.create_namespaced_pod(
+            _ = self.api.create_namespaced_pod(
                 self.namespace,
                 self.pod,
                 _request_timeout=KUBE_REQUEST_TIMEOUT,
@@ -466,7 +475,7 @@ class Build:
                         self.cleanup()
                     elif self.pod.status.phase == 'Failed':
                         self.cleanup()
-            except Exception as e:
+            except Exception:
                 app_log.exception("Error in watch stream for %s", self.name)
                 raise
             finally:
@@ -570,6 +579,6 @@ class FakeBuild(Build):
         self.progress(ProgressEvent.Kind.BUILD_STATUS_CHANGE, ProgressEvent.BuildStatus.COMPLETED)
         self.progress('log', json.dumps({
                 'phase': 'Deleted',
-                'message': f"Deleted...\n",
+                'message': "Deleted...\n",
              })
         )

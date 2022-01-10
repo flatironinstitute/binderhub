@@ -1,6 +1,7 @@
 """
 Launch an image with a temporary user via JupyterHub
 """
+import asyncio
 import base64
 import json
 import random
@@ -9,6 +10,7 @@ import string
 from urllib.parse import urlparse, quote
 import uuid
 import os
+from datetime import timedelta
 
 from tornado.log import app_log
 from tornado import web, gen
@@ -17,6 +19,8 @@ from traitlets.config import LoggingConfigurable
 from traitlets import Integer, Unicode, Bool, default
 from jupyterhub.traitlets import Callable
 from jupyterhub.utils import maybe_future
+
+from .utils import url_path_join
 
 # pattern for checking if it's an ssh repo and not a URL
 # used only after verifying that `://` is not present
@@ -73,19 +77,28 @@ class Launcher(LoggingConfigurable):
         config=True,
         allow_none=True,
         help="""
-        An optional hook function that you can use to implement checks before starting a user's server. 
-        For example if you have a non-standard BinderHub deployment, 
+        An optional hook function that you can use to implement checks before starting a user's server.
+        For example if you have a non-standard BinderHub deployment,
         in this hook you can check if the current user has right to launch a new repo.
-        
+
         Receives 5 parameters: launcher, image, username, server_name, repo_url
         """
+    )
+    launch_timeout = Integer(
+        600,
+        config=True,
+        help="""
+        Wait this many seconds until server is ready, raise TimeoutError otherwise.
+        """,
     )
 
     async def api_request(self, url, *args, **kwargs):
         """Make an API request to JupyterHub"""
         headers = kwargs.setdefault('headers', {})
-        headers.update({'Authorization': 'token %s' % self.hub_api_token})
+        headers.update({'Authorization': f'token {self.hub_api_token}'})
         hub_api_url = os.getenv('JUPYTERHUB_API_URL', '') or self.hub_url_local + 'hub/api/'
+        if not hub_api_url.endswith('/'):
+            hub_api_url += '/'
         request_url = hub_api_url + url
         req = HTTPRequest(request_url, *args, **kwargs)
         retry_delay = self.retry_delay
@@ -114,7 +127,7 @@ class Launcher(LoggingConfigurable):
 
     async def get_user_data(self, username):
         resp = await self.api_request(
-            'users/%s' % username,
+            f'users/{username}',
             method='GET',
         )
         body = json.loads(resp.body.decode('utf-8'))
@@ -146,7 +159,15 @@ class Launcher(LoggingConfigurable):
         # add a random suffix to avoid collisions for users on the same image
         return '{}-{}'.format(prefix, ''.join(random.choices(SUFFIX_CHARS, k=SUFFIX_LENGTH)))
 
-    async def launch(self, image, username, server_name='', repo_url='', extra_args=None):
+    async def launch(
+        self,
+        image,
+        username,
+        server_name="",
+        repo_url="",
+        extra_args=None,
+        event_callback=None,
+    ):
         """Launch a server for a given image
 
         - creates a temporary user on the Hub if authentication is not enabled
@@ -167,7 +188,7 @@ class Launcher(LoggingConfigurable):
             # create a new user
             app_log.info("Creating user %s for image %s", username, image)
             try:
-                await self.api_request('users/%s' % escaped_username, body=b'', method='POST')
+                await self.api_request(f'users/{escaped_username}', body=b'', method='POST')
             except HTTPError as e:
                 if e.response:
                     body = e.response.body
@@ -176,13 +197,13 @@ class Launcher(LoggingConfigurable):
                 app_log.error("Error creating user %s: %s\n%s",
                     username, e, body,
                 )
-                raise web.HTTPError(500, "Failed to create temporary user for %s" % image)
+                raise web.HTTPError(500, f"Failed to create temporary user for {image}")
         elif server_name == '':
             # authentication is enabled but not named servers
             # check if user has a running server ('')
             user_data = await self.get_user_data(escaped_username)
             if server_name in user_data['servers']:
-                raise web.HTTPError(409, "User %s already has a running server." % username)
+                raise web.HTTPError(409, f"User {username} already has a running server.")
         elif self.named_server_limit_per_user > 0:
             # authentication is enabled with named servers
             # check if user has already reached to the limit of named servers
@@ -212,39 +233,102 @@ class Launcher(LoggingConfigurable):
         _server_name = " {}".format(server_name) if server_name else ''
 
         # start server
-        app_log.info("Starting server%s for user %s with image %s extra_args %s", _server_name, username, image, extra_args)
+        app_log.info(f"Starting server{_server_name} for user {username} with image {image} extra_args {extra_args}")
+        ready_event_future = asyncio.Future()
+
+        def _cancel_ready_event(f=None):
+            if not ready_event_future.done():
+                if f and f.exception():
+                    ready_event_future.set_exception(f.exception())
+                else:
+                    ready_event_future.cancel()
         try:
             resp = await self.api_request(
                 'users/{}/servers/{}'.format(escaped_username, server_name),
                 method='POST',
                 body=json.dumps(data).encode('utf8'),
             )
-            if resp.code == 202:
-                # Server hasn't actually started yet
-                # We wait for it!
-                # NOTE: This ends up being about ten minutes
-                for i in range(64):
-                    user_data = await self.get_user_data(escaped_username)
-                    if user_data['servers'][server_name]['ready']:
-                        break
-                    if not user_data['servers'][server_name]['pending']:
-                        raise web.HTTPError(500, "Image %s for user %s failed to launch" % (image, username))
-                    # FIXME: make this configurable
-                    # FIXME: Measure how long it takes for servers to start
-                    # and tune this appropriately
-                    await gen.sleep(min(1.4 ** i, 10))
-                else:
-                    raise web.HTTPError(500, "Image %s for user %s took too long to launch. Sufficient resources may not currently be available." % (image, username))
+            # listen for pending spawn (launch) events until server is ready
+            # do this even if previous request finished!
+            buffer_list = []
+
+            async def handle_chunk(chunk):
+                lines = b"".join(buffer_list + [chunk]).split(b"\n\n")
+                # the last item in the list is usually an empty line ('')
+                # but it can be the partial line after the last `\n\n`,
+                # so put it back on the buffer to handle with the next chunk
+                buffer_list[:] = [lines[-1]]
+                for line in lines[:-1]:
+                    if line:
+                        line = line.decode("utf8", "replace")
+                    if line and line.startswith("data:"):
+                        event = json.loads(line.split(":", 1)[1])
+                        if event_callback:
+                            await event_callback(event)
+
+                        # stream ends when server is ready or fails
+                        if event.get("ready", False):
+                            if not ready_event_future.done():
+                                ready_event_future.set_result(event)
+                        elif event.get("failed", False):
+                            if not ready_event_future.done():
+                                ready_event_future.set_exception(
+                                    web.HTTPError(
+                                        500, event.get("message", "unknown error")
+                                    )
+                                )
+
+            url_parts = ["users", username]
+            if server_name:
+                url_parts.extend(["servers", server_name, "progress"])
+            else:
+                url_parts.extend(["server/progress"])
+            progress_api_url = url_path_join(*url_parts)
+            self.log.debug(f"Requesting progress for {username}: {progress_api_url}")
+            resp_future = self.api_request(
+                progress_api_url,
+                streaming_callback=lambda chunk: asyncio.ensure_future(
+                    handle_chunk(chunk)
+                ),
+                request_timeout=self.launch_timeout,
+            )
+            try:
+                await gen.with_timeout(
+                    timedelta(seconds=self.launch_timeout), resp_future
+                )
+            except (gen.TimeoutError, TimeoutError):
+                _cancel_ready_event()
+                raise web.HTTPError(
+                    500,
+                    f"Image {image} for user {username} took too long to launch. Sufficient resources may not currently be available.",
+                )
 
         except HTTPError as e:
+            _cancel_ready_event()
             if e.response:
                 body = e.response.body
             else:
                 body = ''
 
-            app_log.error("Error starting server{} for user {}: {}\n{}".
-                          format(_server_name, username, e, body))
-            raise web.HTTPError(500, "Failed to launch image %s" % image)
+            app_log.error(
+                f"Error starting server{_server_name} for user {username}: {e}\n{body}"
+            )
+            raise web.HTTPError(500, f"Failed to launch image {image}")
+        except Exception:
+            _cancel_ready_event()
+            raise
 
-        data['url'] = self.hub_url + 'user/%s/%s' % (escaped_username, server_name)
+        # verify that the server is running!
+        try:
+            # this should already be done, but it's async so wait a finite time
+            ready_event = await gen.with_timeout(
+                timedelta(seconds=5), ready_event_future
+            )
+        except (gen.TimeoutError, TimeoutError):
+            raise web.HTTPError(
+                500, f"Image {image} for user {username} failed to launch"
+            )
+
+        data["url"] = self.hub_url + f"user/{escaped_username}/{server_name}"
+        self.log.debug(data["url"])
         return data

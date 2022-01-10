@@ -8,6 +8,10 @@ from tornado.httpclient import HTTPError, HTTPRequest, HTTPResponse
 
 from tornado.curl_httpclient import CurlAsyncHTTPClient
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import requests
+
 
 class MockAsyncHTTPClient(CurlAsyncHTTPClient):
     mocks = {}
@@ -78,7 +82,8 @@ class MockAsyncHTTPClient(CurlAsyncHTTPClient):
             error = e
             response = e.response
 
-        self._record_response(url_key, response)
+        if response:
+            self._record_response(url_key, response)
         # return or raise the original result
         if error:
             raise error
@@ -88,12 +93,6 @@ class MockAsyncHTTPClient(CurlAsyncHTTPClient):
 
 # async-request utility from jupyterhub.tests.utils v0.8.1
 # used under BSD license
-
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import requests
-
-
 class _AsyncRequests:
     """Wrapper around requests to return a Future from request methods
 

@@ -25,7 +25,7 @@ def retry(_f=None, *, delay=1, attempts=3):
             while attempts > 0:
                 try:
                     return await f(*args, **kwargs)
-                except Exception as e:
+                except Exception:
                     if attempts == 1:
                         raise
                     else:
@@ -47,7 +47,7 @@ def false_if_raises(f):
     async def wrapper(*args, **kwargs):
         try:
             res = await f(*args, **kwargs)
-        except Exception as e:
+        except Exception:
             app_log.exception(f"Error checking {f.__name__}")
             res = False
         return res
@@ -138,7 +138,7 @@ class HealthHandler(BaseHandler):
     @retry
     async def check_jupyterhub_api(self, hub_url):
         """Check JupyterHub API health"""
-        await AsyncHTTPClient().fetch(hub_url + "hub/health", request_timeout=3)
+        await AsyncHTTPClient().fetch(hub_url + "hub/api/health", request_timeout=3)
         return True
 
     @false_if_raises

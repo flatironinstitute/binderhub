@@ -14,7 +14,7 @@ from stat import S_ISDIR, S_ISREG, S_IROTH, S_IXOTH
 import time
 import urllib.parse
 import re
-import subprocess
+import asyncio
 import string
 import yaml
 from urllib.parse import urlparse
@@ -157,12 +157,12 @@ class RepoProvider(LoggingConfigurable):
                 raise ValueError(
                     "Spec-pattern configuration expected "
                     "a regex pattern string, not "
-                    "type %s" % type(pattern))
+                    f"type {type(pattern)}")
             if not isinstance(config, dict):
                 raise ValueError(
                     "Spec-pattern configuration expected "
                     "a specification configuration dict, not "
-                    "type %s" % type(config))
+                    f"type {type(config)}")
             # Ignore case, because most git providers do not
             # count DS-100/textbook as different from ds-100/textbook
             if re.match(pattern, self.spec, re.IGNORECASE):
@@ -195,9 +195,8 @@ class RepoProvider(LoggingConfigurable):
         return True
 
     @staticmethod
-    def sha1_validate(sha1):
-        if not SHA1_PATTERN.match(sha1):
-            raise ValueError("resolved_ref is not a valid sha1 hexadecimal hash")
+    def is_valid_sha1(sha1):
+        return bool(SHA1_PATTERN.match(sha1))
 
 
 class FakeProvider(RepoProvider):
@@ -521,23 +520,25 @@ class GitRepoProvider(RepoProvider):
         if hasattr(self, 'resolved_ref'):
             return self.resolved_ref
 
-        try:
-            # Check if the reference is a valid SHA hash
-            self.sha1_validate(self.unresolved_ref)
-        except ValueError:
-            # The ref is a head/tag and we resolve it using `git ls-remote`
-            command = ["git", "ls-remote", "--", self.repo, self.unresolved_ref]
-            result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if result.returncode:
-                raise RuntimeError("Unable to run git ls-remote to get the `resolved_ref`: {}".format(result.stderr))
-            if not result.stdout:
-                return None
-            resolved_ref = result.stdout.split(None, 1)[0]
-            self.sha1_validate(resolved_ref)
-            self.resolved_ref = resolved_ref
-        else:
+        if self.is_valid_sha1(self.unresolved_ref):
             # The ref already was a valid SHA hash
             self.resolved_ref = self.unresolved_ref
+        else:
+            # The ref is a head/tag and we resolve it using `git ls-remote`
+            command = ["git", "ls-remote", "--", self.repo, self.unresolved_ref]
+            proc = await asyncio.create_subprocess_exec(
+                *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+            retcode = await proc.wait()
+            if retcode:
+                raise RuntimeError("Unable to run git ls-remote to get the `resolved_ref`: {}".format(stderr.decode()))
+            if not stdout:
+                return None
+            resolved_ref = stdout.decode().split(None, 1)[0]
+            if not self.is_valid_sha1(resolved_ref):
+                raise ValueError(f'resolved_ref {resolved_ref} is not a valid sha1 hexadecimal hash')
+            self.resolved_ref = resolved_ref
 
         return self.resolved_ref
 
@@ -826,9 +827,7 @@ class GitHubRepoProvider(RepoProvider):
                 # round expiry up to nearest 5 minutes
                 minutes_until_reset = 5 * (1 + (reset_seconds // 60 // 5))
 
-                raise ValueError("GitHub rate limit exceeded. Try again in %i minutes."
-                    % minutes_until_reset
-                )
+                raise ValueError(f"GitHub rate limit exceeded. Try again in {minutes_until_reset} minutes.")
             # Status 422 is returned by the API when we try and resolve a non
             # existent reference
             elif e.code in (404, 422):

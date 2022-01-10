@@ -51,7 +51,7 @@ from .launcher import Launcher
 from .log import log_request
 from .ratelimit import RateLimiter
 from .repoproviders import RepoProvider
-from .registry import DockerRegistry, FakeRegistry
+from .registry import DockerRegistry
 from .main import MainHandler, ParameterizedMainHandler, LegacyRedirectHandler, UserRedirectHandler
 from .repoproviders import (GitHubRepoProvider, GitRepoProvider,
                             GitLabRepoProvider, GistRepoProvider,
@@ -195,6 +195,21 @@ class BinderHub(Application):
             proposal.value = proposal.value + '/'
         return proposal.value
 
+    cors_allow_origin = Unicode(
+        "",
+        help="""
+        Origins that can access the BinderHub API.
+
+        Sets the Access-Control-Allow-Origin header in the spawned
+        notebooks. Set to '*' to allow any origin to access spawned
+        notebook servers.
+
+        See also BinderSpawner.cors_allow_origin in the binderhub spawner
+        mixin for setting this property on the spawned notebooks.
+        """,
+        config=True
+    )
+
     auth_enabled = Bool(
         False,
         help="""If JupyterHub authentication enabled,
@@ -256,7 +271,7 @@ class BinderHub(Application):
         Build,
         help="""
         The class used to build repo2docker images.
-        
+
         Must inherit from binderhub.build.Build
         """,
         config=True
@@ -290,8 +305,9 @@ class BinderHub(Application):
         The number of concurrent pods this hub has been designed to support.
 
         This quota is used as an indication for how much above or below the
-        design capacity a hub is running. It is not used to reject new launch
-        requests when usage is above the quota.
+        design capacity a hub is running.
+
+        Attempts to launch new pods once the quota has been reached will fail.
 
         The default corresponds to no quota, 0 means the hub can't accept pods
         (maybe because it is in maintenance mode), and any positive integer
@@ -809,6 +825,8 @@ class BinderHub(Application):
         )
         if self.auth_enabled:
             self.tornado_settings['cookie_secret'] = os.urandom(32)
+        if self.cors_allow_origin:
+            self.tornado_settings.setdefault('headers', {})['Access-Control-Allow-Origin'] = self.cors_allow_origin
 
         handlers = [
             (r'/metrics', MetricsHandler),

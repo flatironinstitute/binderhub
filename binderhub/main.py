@@ -68,15 +68,18 @@ class ParameterizedMainHandler(BaseHandler):
         social_desc = f"{SPEC_NAMES[provider_prefix]}: {spec}"
         nbviewer_url = None
         if provider_prefix == "gh":
-            # we can only produce an nbviewer URL for github right now
+            # We can only produce an nbviewer URL for github right now
             nbviewer_url = 'https://nbviewer.jupyter.org/github'
             org, repo_name, ref = spec.split('/', 2)
             # NOTE: tornado unquotes query arguments too -> notebooks%2Findex.ipynb becomes notebooks/index.ipynb
-            filepath = self.get_argument('filepath', '').lstrip('/')
+            filepath = self.get_argument("labpath", "").lstrip("/")
+            if not filepath:
+                filepath = self.get_argument('filepath', '').lstrip('/')
 
-            # Check if we have a JupyterLab + file path, if so then use it for the filepath
+
+            # Check the urlpath parameter for a file path, if so use it for the filepath
             urlpath = self.get_argument('urlpath', '').lstrip('/')
-            if urlpath.startswith("lab") and "/tree/" in urlpath:
+            if urlpath and "/tree/" in urlpath:
                 filepath = urlpath.split('tree/', 1)[-1]
 
             blob_or_tree = 'blob' if filepath else 'tree'

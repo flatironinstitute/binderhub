@@ -1,3 +1,6 @@
+# This is a GitHub workflow defining a set of jobs with a set of steps.
+# ref: https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions
+#
 name: Tests
 
 on:
@@ -6,6 +9,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: check embedded chart code
+        run: ./ci/check_embedded_chart_code.py
+
   # Most of the "main", "auth" and "helm" jobs are the same and only differ
   # in small things. Unfortunately there is no easy way to share steps between
   # jobs or have "template" jobs, so we use `if` conditions on steps
@@ -16,13 +27,28 @@ jobs:
       fail-fast: false
       matrix:
         k3s-channel:
-        - v1.19
-        helm-version:
-        - v3.5.0
+        # Available channels: https://github.com/k3s-io/k3s/blob/HEAD/channel.yaml
+        - latest
         test:
         - main
         - auth
         - helm
+        include:
+          # Chart.yaml contains the chart's oldest supported k8s version, we
+          # want to test against that. We also test against the oldest known
+          # supported helm cli version which isn't documented anywhere, but is
+          # currently at 3.5.0. Currently we have listed 1.17 in Chart.yaml, but
+          # due to a k3s issue with their k8s 1.17 release, we can't test
+          # against k8s 1.17 and settle for k8s 1.18 for now.
+          - k3s-channel: v1.18
+            helm-version: v3.5.0
+            test: helm
+          - k3s-channel: stable
+            test: helm
+            test-variation: upgrade
+            # upgrade-from represents a release channel, see: https://jupyterhub.github.io/helm-chart/info.json
+            upgrade-from: dev
+            upgrade-from-extra-args: ""
     steps:
       - uses: actions/checkout@v2
         with:
@@ -31,7 +57,7 @@ jobs:
 
       - uses: jupyterhub/action-k3s-helm@v1
         with:
-          k3s-version: ${{ matrix.k3s-version }}
+          k3s-channel: ${{ matrix.k3s-channel }}
           helm-version: ${{ matrix.helm-version }}
           metrics-enabled: false
           traefik-enabled: false
@@ -82,7 +108,9 @@ jobs:
             pip install --upgrade setuptools wheel
 
       - name: Setup Python package dependencies
-        run: pip install -r dev-requirements.txt -r helm-chart/images/binderhub/requirements.txt .
+        run: |
+          pip install -r dev-requirements.txt -r helm-chart/images/binderhub/requirements.txt
+          pip install .
 
       - name: Install JupyterHub chart for main tests
         if: matrix.test == 'main'
@@ -119,7 +147,53 @@ jobs:
             helm template --validate binderhub-test helm-chart/binderhub \
                 --values testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
                 --set config.BinderHub.hub_url=http://localhost:30902 \
-                --set config.BinderHub.access_token=$GITHUB_ACCESS_TOKEN
+                --set config.GitHubRepoProvider.access_token=$GITHUB_ACCESS_TOKEN
+
+      - name: "(Upgrade) Install ${{ matrix.upgrade-from }} chart"
+        if: matrix.test-variation == 'upgrade'
+        run: |
+          . ./ci/common
+          UPGRADE_FROM_VERSION=$(curl -sS https://jupyterhub.github.io/helm-chart/info.json | jq -er '.binderhub.${{ matrix.upgrade-from }}')
+          echo "UPGRADE_FROM_VERSION=$UPGRADE_FROM_VERSION" >> $GITHUB_ENV
+
+          echo ""
+          echo "Installing already released binderhub version $UPGRADE_FROM_VERSION"
+
+          # FIXME: We change the directory so binderhub the chart name won't be
+          #        misunderstood as the local folder name.
+          #
+          #        https://github.com/helm/helm/issues/9244
+          cd ci
+          helm install binderhub-test \
+              --repo https://jupyterhub.github.io/helm-chart/ binderhub \
+              --version=$UPGRADE_FROM_VERSION \
+              --values ../testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
+              --set config.BinderHub.hub_url=http://localhost:30902 \
+              --set config.BinderHub.hub_url_local=http://proxy-public \
+              --set config.GitHubRepoProvider.access_token=$GITHUB_ACCESS_TOKEN \
+              ${{ matrix.upgrade-from-extra-args }}
+
+      - name: "(Upgrade) Install helm diff"
+        if: matrix.test-variation == 'upgrade'
+        run: |
+          helm plugin install https://github.com/databus23/helm-diff
+
+      - name: "(Upgrade) Helm diff ${{ matrix.upgrade-from }} chart with local chart"
+        if: matrix.test-variation == 'upgrade'
+        run: |
+          helm diff upgrade binderhub-test ./helm-chart/binderhub \
+              --values testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
+              --set config.BinderHub.hub_url=http://localhost:30902 \
+              --set config.BinderHub.hub_url_local=http://proxy-public \
+              --set config.GitHubRepoProvider.access_token=$GITHUB_ACCESS_TOKEN \
+              ${{ matrix.local-chart-extra-args }}
+
+      - name: "(Upgrade) Await ${{ matrix.upgrade-from }} chart"
+        if: matrix.test-variation == 'upgrade'
+        uses: jupyterhub/action-k8s-await-workloads@v1
+        with:
+          timeout: 150
+          max-restarts: 1
 
       - name: Install the chart
         if: matrix.test == 'helm'
@@ -128,7 +202,8 @@ jobs:
               --values testing/k8s-binder-k8s-hub/binderhub-chart-config.yaml \
               --set config.BinderHub.hub_url=http://localhost:30902 \
               --set config.BinderHub.hub_url_local=http://proxy-public \
-              --set config.BinderHub.access_token=$GITHUB_ACCESS_TOKEN
+              --set config.GitHubRepoProvider.access_token=$GITHUB_ACCESS_TOKEN \
+              ${{ matrix.local-chart-extra-args }}
 
       - name: Await and curl JupyterHub
         run: |
@@ -142,7 +217,7 @@ jobs:
         if: matrix.test == 'helm'
         run: |
             . ci/common
-            await_binderhub
+            await_binderhub binderhub-test
 
             echo curl http://localhost:30901/health to check BinderHub\'s health
             curl http://localhost:30901/health --max-time 5 --retry 5 --retry-delay 1 --retry-connrefused
@@ -174,3 +249,73 @@ jobs:
       - name: Upload coverage stats
         uses: codecov/codecov-action@v1
         if: ${{ always() }}
+
+  test-local:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup OS level dependencies
+        run: |
+            sudo apt-get update
+            sudo apt-get install --yes \
+              build-essential \
+              curl \
+              libcurl4-openssl-dev \
+              libssl-dev
+
+      - uses: actions/setup-node@v2-beta
+        with:
+          node-version: '14'
+
+      - name: Cache npm
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Cache pip
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-python-${{ hashFiles('**/*requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-python-${{ hashFiles('**/*requirements.txt') }}
+            ${{ runner.os }}-python-
+
+      - name: Update pip
+        run: |
+            pip install --upgrade pip
+            pip install --upgrade setuptools wheel
+
+      - name: Setup Python package dependencies
+        run: |
+          pip install -r dev-requirements.txt -r testing/local-binder-local-hub/requirements.txt
+          pip install .
+
+      - name: Setup JupyterHub NPM dependencies
+        run: npm install -g configurable-http-proxy
+
+      - name: Await and curl JupyterHub
+        run: |
+            cd testing/local-binder-local-hub
+            jupyterhub --config=jupyterhub_config.py > jupyterhub.log 2>&1 &
+            sleep 5
+
+            echo curl http://localhost:8000/hub/api/ should print the JupyterHub version
+            curl http://localhost:8000/hub/api/ --max-time 5 --retry 5 --retry-delay 1 --retry-connrefused
+
+      - name: Run remote tests
+        run: |
+          export BINDER_URL=http://localhost:8000/services/binder/
+          pytest -m remote -v --color=yes
+
+      - name: Show hub logs
+        if: always()
+        run: cat testing/local-binder-local-hub/jupyterhub.log

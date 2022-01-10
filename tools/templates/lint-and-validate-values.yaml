@@ -39,6 +39,7 @@ service:
     mock-annotation1-key: mock-annotation1-value
     mock-annotation2-key: mock-annotation2-value
   nodePort: 1234
+  loadBalancerIP: 123.123.123.123
 
 config:
   BinderHub:
@@ -48,16 +49,10 @@ extraConfig:
   binder-test-config: |-
     dummy binderhub python code ...
 
-cors: &cors
-  allowOrigin:
-
 jupyterhub:
   cull:
     enabled: true
     users: true
-  custom:
-    cors: *cors
-    binderauth_enabled: false
   rbac:
     enabled: true
   hub:
@@ -94,7 +89,7 @@ deployment:
   labels: *labels
 
 dind:
-  enabled: false
+  enabled: true
   initContainers: &initContainers
     - name: mock-init-container-name
       image: mock-init-container-image
@@ -134,7 +129,9 @@ ingress:
     type: kube-lego
   hosts: [domain.com]
   annotations: *annotations
+  ingressClassName: mock-ingress-class-name
   pathSuffix: dummy-pathSuffix
+  pathType: ImplementationSpecific
   tls:
     - secretName: binderhub-tls
       hosts:

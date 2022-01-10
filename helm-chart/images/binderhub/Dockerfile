@@ -23,22 +23,35 @@ COPY . /tmp/binderhub
 WORKDIR /tmp/binderhub
 
 # Build the binderhub python library into a wheel and save it to the ./dist
-# folder. There are no pycurl wheels so we build our own in the build stage.
-RUN python setup.py bdist_wheel
-RUN pip wheel pycurl --wheel-dir ./dist
+# folder. There are no pycurl or ruamel.yaml.clib wheels so we build our own in
+# the build stage.
+RUN python -mpip install build && python -mbuild --wheel .
+RUN pip wheel --wheel-dir ./dist \
+       pycurl \
+       ruamel.yaml.clib
 
+# We download tini from here were we have wget available.
+RUN ARCH=$(uname -m); \
+    if [ "$ARCH" = x86_64 ]; then ARCH=amd64; fi; \
+    if [ "$ARCH" = aarch64 ]; then ARCH=arm64; fi; \
+    wget -qO /tini "https://github.com/krallin/tini/releases/download/v0.19.0/tini-$ARCH" \
+ && chmod +x /tini
 
 # The final stage
 # ---------------
 FROM python:3.8-slim-$DIST
 WORKDIR /
 
+# We use tini as an entrypoint to not loose track of SIGTERM signals as sent
+# before SIGKILL when "docker stop" or "kubectl delete pod" is run. By doing
+# that the pod can terminate very quickly.
+COPY --from=build-stage /tini /tini
+ 
 # The slim version doesn't include git as required by binderhub
 RUN apt-get update \
  && apt-get install --yes \
         git \
  && rm -rf /var/lib/apt/lists/*
-
 
 # Copy the built wheels from the build-stage. Also copy the image
 # requirements.txt built from the binderhub package requirements.txt and the
@@ -57,7 +70,7 @@ RUN pip install --no-cache-dir \
 ARG PIP_TOOLS=
 RUN test -z "$PIP_TOOLS" || pip install --no-cache pip-tools==$PIP_TOOLS
 
-ENTRYPOINT ["python3", "-m", "binderhub"]
+ENTRYPOINT ["/tini", "--", "python3", "-m", "binderhub"]
 CMD ["--config", "/etc/binderhub/config/binderhub_config.py"]
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8585

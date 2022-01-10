@@ -4,7 +4,9 @@ click
 codecov
 html5lib
 jsonschema
+jupyter_packaging>=0.10.4,<2
 jupyterhub
+pycurl
 pytest
 pytest-asyncio
 pytest-cov
@@ -12,5 +14,6 @@ pytest-cov
 # using ruamel.yaml. ruamel.yaml is more powerful than pyyaml, and that is
 # relevant when writing YAML files back after having loaded them from disk.
 pyyaml
+jupyter-repo2docker>=2021.08.0
 requests
 ruamel.yaml>=0.15

@@ -17,7 +17,7 @@ from binderhub.repoproviders import (
     tokenize_spec,
 )
 
-sha1_validate = GitRepoProvider.sha1_validate
+is_valid_sha1 = GitRepoProvider.is_valid_sha1
 
 
 # General string processing
@@ -199,10 +199,10 @@ def test_github_ref(repo, unresolved_ref, resolved_ref):
     full_url = provider.get_repo_url()
     assert full_url == f"https://github.com/{repo}"
     ref = IOLoop().run_sync(provider.get_resolved_ref)
-    if resolved_ref == True:
+    if resolved_ref is True:
         # True means it should resolve, but don't check value
         assert ref is not None
-        sha1_validate(ref)
+        assert is_valid_sha1(ref)
     else:
         assert ref == resolved_ref
     if not resolved_ref:
@@ -353,7 +353,7 @@ class TestSpecErrorHandling(TestCase):
 
     def test_spec_with_no_suggestion(self):
         spec = "short/master"
-        error = "^((?!Did you mean).)*$".format(spec)  # negative match
+        error = "^((?!Did you mean).)*$"  # negative match
         with self.assertRaisesRegex(ValueError, error):
             user, repo, unresolved_ref = tokenize_spec(spec)
 
@@ -393,10 +393,10 @@ def test_git_ref(url, unresolved_ref, resolved_ref):
     full_url = provider.get_repo_url()
     assert full_url == url
     ref = IOLoop().run_sync(provider.get_resolved_ref)
-    if resolved_ref == True:
+    if resolved_ref is True:
         # True means it should resolve, but don't check value
         assert ref is not None
-        sha1_validate(ref)
+        assert is_valid_sha1(ref)
     else:
         assert ref == resolved_ref
     if not resolved_ref:
@@ -461,10 +461,10 @@ def test_gitlab_ref(unresolved_ref, resolved_ref):
     full_url = provider.get_repo_url()
     assert full_url == f'https://gitlab.com/{namespace}.git'
     ref = IOLoop().run_sync(provider.get_resolved_ref)
-    if resolved_ref == True:
+    if resolved_ref is True:
         # True means it should resolve, but don't check value
         assert ref is not None
-        sha1_validate(ref)
+        assert is_valid_sha1(ref)
     else:
         assert ref == resolved_ref
     if not resolved_ref:
@@ -501,10 +501,10 @@ def test_gist_ref(owner, gist_id, unresolved_ref, resolved_ref):
     full_url = provider.get_repo_url()
     assert full_url == f"https://gist.github.com/{owner}/{gist_id}.git"
     ref = IOLoop().run_sync(provider.get_resolved_ref)
-    if resolved_ref == True:
+    if resolved_ref is True:
         # True means it should resolve, but don't check value
         assert ref is not None
-        sha1_validate(ref)
+        assert is_valid_sha1(ref)
     else:
         assert ref == resolved_ref
     if not resolved_ref:

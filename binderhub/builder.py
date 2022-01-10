@@ -248,7 +248,7 @@ class BuildHandler(BaseHandler):
         # EventSource cannot handle HTTP errors, so we must validate and send
         # error messages on the eventsource.
         if provider_prefix not in self.settings['repo_providers']:
-            await self.fail("No provider found for prefix %s" % provider_prefix)
+            await self.fail(f"No provider found for prefix {provider_prefix}")
             return
 
         # create a heartbeat
@@ -291,7 +291,7 @@ class BuildHandler(BaseHandler):
             return
 
         if ref is None:
-            error_message = ["Could not resolve ref for %s. Double check your URL." % key]
+            error_message = [f"Could not resolve ref for {key}. Double check your URL."]
 
             if provider.name == "GitHub":
                 error_message.append('GitHub recently changed default branches from "master" to "main".')
@@ -532,11 +532,11 @@ class BuildHandler(BaseHandler):
 
         # TODO: put busy users in a queue rather than fail?
         # That would be hard to do without in-memory state.
-        quota = repo_config.get('quota')
-        if quota:
+        repo_quota = repo_config.get("quota")
+        pod_quota = self.settings["pod_quota"]
+        if pod_quota is not None or repo_quota:
             # Fetch info on currently running users *only* if quotas are set
             matching_pods = 0
-            total_pods = 0
 
             # TODO: run a watch to keep this up to date in the background
             f = self.settings['executor'].submit(
@@ -548,8 +548,19 @@ class BuildHandler(BaseHandler):
             )
             resp = await asyncio.wrap_future(f)
             pods = json.loads(resp.read())
+            total_pods = len(pods)
+
+            if pod_quota is not None and total_pods >= pod_quota:
+                # check overall quota first
+                LAUNCH_COUNT.labels(
+                    status="pod_quota",
+                    **self.repo_metric_labels,
+                ).inc()
+                app_log.error(f"BinderHub is full: {total_pods}/{pod_quota}")
+                await self.fail("Too many users on this BinderHub! Try again soon.")
+                return
+
             for pod in pods["items"]:
-                total_pods += 1
                 for container in pod["spec"]["containers"]:
                     # is the container running the same image as us?
                     # if so, count one for the current repo.
@@ -557,13 +568,21 @@ class BuildHandler(BaseHandler):
                     if image == image_no_tag:
                         matching_pods += 1
                         break
-            if matching_pods >= quota:
-                app_log.error("%s has exceeded quota: %s/%s (%s total)",
-                    self.repo_url, matching_pods, quota, total_pods)
-                await self.fail("Too many users running %s! Try again soon." % self.repo_url)
+
+            if repo_quota and matching_pods >= repo_quota:
+                LAUNCH_COUNT.labels(
+                    status="repo_quota",
+                    **self.repo_metric_labels,
+                ).inc()
+                app_log.error(
+                    f"{self.repo_url} has exceeded quota: {matching_pods}/{repo_quota} ({total_pods} total)"
+                )
+                await self.fail(
+                    f"Too many users running {self.repo_url}! Try again soon."
+                )
                 return
 
-            if matching_pods >= 0.5 * quota:
+            if matching_pods >= 0.5 * repo_quota:
                 log = app_log.warning
             else:
                 log = app_log.info
@@ -593,6 +612,16 @@ class BuildHandler(BaseHandler):
                 username = launcher.unique_name_from_repo(self.repo_url)
                 server_name = ''
             try:
+
+                async def handle_progress_event(event):
+                    message = event["message"]
+                    await self.emit(
+                        {
+                            "phase": "launching",
+                            "message": message + "\n",
+                        }
+                    )
+
                 extra_args = {
                     'environment': {},
                     'extra_annotations': {
@@ -610,11 +639,14 @@ class BuildHandler(BaseHandler):
                     extra_args['environment']['BINDER_'+k.upper()] = v
                     extra_args['extra_annotations']['binder.jupyter.org/'+k] = v
                 extra_args.update(self.launch_options)
-                server_info = await launcher.launch(image=self.image_name,
-                                                    username=username,
-                                                    server_name=server_name,
-                                                    repo_url=self.repo_url,
-                                                    extra_args=extra_args)
+                server_info = await launcher.launch(
+                    image=self.image_name,
+                    username=username,
+                    server_name=server_name,
+                    repo_url=self.repo_url,
+                    extra_args=extra_args,
+                    event_callback=handle_progress_event,
+                )
             except Exception as e:
                 if isinstance(e, web.HTTPError) and e.status_code == 409:
                     raise
@@ -649,9 +681,7 @@ class BuildHandler(BaseHandler):
                 await self.emit(
                     {
                         "phase": "launching",
-                        "message": "Launch attempt {} failed, retrying...\n".format(
-                            i + 1
-                        ),
+                        "message": f"Launch attempt {i + 1} failed, retrying...\n",
                     }
                 )
                 await gen.sleep(retry_delay)
@@ -669,7 +699,7 @@ class BuildHandler(BaseHandler):
                 break
         event = {
             'phase': 'ready',
-            'message': 'server running at %s\n' % server_info['url'],
+            'message': f"server running at {server_info['url']}\n",
         }
         event.update(server_info)
         await self.emit(event)
