@@ -262,7 +262,7 @@ jupyterhub:
         from kubernetes.utils import parse_quantity
 
         import z2jh
-        allowed = list(map(ipaddress.ip_network, z2jh.get_config('custom.allowed_monitor_ips', [])))
+        allowed = list(map(ipaddress.ip_network, z2jh.get_config('config.Monitor.allowed_monitor_ips', [])))
 
         class Monitor(object):
             def collect(self):
