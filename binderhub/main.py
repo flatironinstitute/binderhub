@@ -140,7 +140,7 @@ class UserRedirectHandler(BaseHandler):
     """Redirect handler for tilde specs"""
 
     @authenticated
-    def get(self, spec):
+    def get(self, spec, urlpath=None):
         url = '/v2/user/{spec}'.format(spec=spec)
         if urlpath is not None and urlpath.strip('/'):
             url = url_concat(url, dict(urlpath=urlpath))
