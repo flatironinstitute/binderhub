@@ -1101,7 +1101,7 @@ class CuratedRepoProvider(RepoProvider):
     labels = {
         "text": "Owner",
         "tag_text": "Project",
-        "tag_placeholder": "environment/name",
+        "tag_placeholder": "Project name (may contain slashes)",
         "ref_prop_disabled": False,
         "label_prop_disabled": False,
     }
