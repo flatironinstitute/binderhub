@@ -11,15 +11,14 @@ we trim away everything that isn't needed.
 
 import json
 import os
-
 from collections.abc import MutableMapping
 
-import yaml
+from ruamel.yaml import YAML
+
+yaml = YAML()
 
 here_dir = os.path.abspath(os.path.dirname(__file__))
-schema_yaml = os.path.join(
-    here_dir, os.pardir, "helm-chart/binderhub", "schema.yaml"
-)
+schema_yaml = os.path.join(here_dir, os.pardir, "helm-chart/binderhub", "schema.yaml")
 values_schema_json = os.path.join(
     here_dir, os.pardir, "helm-chart/binderhub", "values.schema.json"
 )
@@ -50,7 +49,7 @@ def run():
     # Using these sets, we can validate further manually by printing the results
     # of set operations.
     with open(schema_yaml) as f:
-        schema = yaml.safe_load(f)
+        schema = yaml.load(f)
 
     # Drop what isn't relevant for a values.schema.json file packaged with the
     # Helm chart, such as the description keys only relevant for our

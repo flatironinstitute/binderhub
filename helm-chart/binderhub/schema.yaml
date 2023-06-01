@@ -4,14 +4,14 @@
 #
 # This schema is also used by our documentation system to build the
 # configuration reference section based on the description fields. See
-# doc/source/conf.py for that logic!
+# docs/source/conf.py for that logic!
 #
 # We look to document everything we have default values for in values.yaml, but
 # we don't look to enforce the perfect validation logic within this file.
 #
 # ref: https://json-schema.org/learn/getting-started-step-by-step.html
 #
-$schema": http://json-schema.org/draft-07/schema#
+$schema: http://json-schema.org/draft-07/schema#
 type: object
 additionalProperties: false
 required:
@@ -20,6 +20,7 @@ required:
   - resources
   - rbac
   - nodeSelector
+  - tolerations
   - image
   - registry
   - service
@@ -28,16 +29,19 @@ required:
   - jupyterhub
   - deployment
   - dind
+  - pink
+  - imageBuilderType
   - imageCleaner
   - ingress
   - initContainers
   - lifecycle
+  - extraFiles
   - extraVolumes
   - extraVolumeMounts
   - extraEnv
   - podAnnotations
+  - global
 properties:
-
   pdb: &pdb-spec
     type: object
     additionalProperties: false
@@ -75,7 +79,7 @@ properties:
     additionalProperties: true
     description: |
       A k8s native specification of resources, see [the
-      documentation](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.20/#resourcerequirements-v1-core).
+      documentation](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.26/#resourcerequirements-v1-core).
 
   rbac:
     type: object
@@ -103,6 +107,14 @@ properties:
       See [the Kubernetes
       documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector)
       for more details.
+
+  tolerations: &tolerations-spec
+    type: array
+    description: |
+      Tolerations allow a pod to be scheduled on nodes with taints.
+      See the
+      [Kubernetes docs](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
+      for more info.
 
   image: &image-spec
     type: object
@@ -260,6 +272,37 @@ properties:
       manifest as either the binder pod going into `Error` or `CrashLoopBackoff` states, or in
       some special cases, the binder pod running but... just doing very random things. Be careful!
 
+  extraFiles:
+    type: object
+    additionalProperties: false
+    description: |
+      A dictionary with extra files to be injected into the binder pod's container
+      on startup. This can for example be used to inject: configuration
+      files, custom user interface templates, images, and more.
+
+      See zero-to-jupyterhub's extraFiles documentation for reference.
+    patternProperties:
+      ".*":
+        type: object
+        additionalProperties: false
+        required: [mountPath]
+        oneOf:
+          - required: [data]
+          - required: [stringData]
+          - required: [binaryData]
+        properties:
+          mountPath:
+            type: string
+          data:
+            type: object
+            additionalProperties: true
+          stringData:
+            type: string
+          binaryData:
+            type: string
+          mode:
+            type: number
+
   jupyterhub:
     type: object
     additionalProperties: true
@@ -300,7 +343,7 @@ properties:
           flag.
 
           See [the k8s
-          documentation](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.20/#probe-v1-core)
+          documentation](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.26/#probe-v1-core)
           for more details.
         required: [enabled]
         properties:
@@ -317,6 +360,13 @@ properties:
           See the [Kubernetes docs](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/)
           to learn more about labels.
 
+  imageBuilderType:
+    type: string
+    enum: ["host", "dind", "pink"]
+    default: "host"
+    description: |
+      Selected image builder type
+
   dind:
     type: object
     additionalProperties: false
@@ -324,7 +374,7 @@ properties:
       enabled:
         type: boolean
         description: |
-          TODO
+          DEPRECATED: Use `imageBuilderType: dind`
       initContainers: &initContainers-spec
         type: array
         description: |
@@ -341,13 +391,13 @@ properties:
           extraArgs:
             type: array
             description: |
-              TODO
+              Extra command line arguments for the Docker daemon
           lifecycle: &lifecycle-spec
             type: object
             additionalProperties: false
             description: |
               A k8s native specification of lifecycle hooks on the container, see [the
-              documentation](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.20/#lifecycle-v1-core).
+              documentation](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.26/#lifecycle-v1-core).
             properties:
               postStart:
                 type: object
@@ -376,6 +426,33 @@ properties:
         type: string
         description: |
           TODO
+
+  pink:
+    type: object
+    additionalProperties: false
+    properties:
+      initContainers: *initContainers-spec
+      daemonset:
+        type: object
+        additionalProperties: false
+        properties:
+          image: *image-spec
+          extraArgs:
+            type: array
+            description: |
+              Extra command line arguments for the Podman service, e.g. `[--log-level=debug]`
+          lifecycle: *lifecycle-spec
+          extraVolumes: *extraVolumes-spec
+          extraVolumeMounts: *extraVolumeMounts-spec
+      resources: *resources-spec
+      hostStorageDir:
+        type: string
+        description: |
+          Host path where the containers storage will be located
+      hostSocketDir:
+        type: string
+        description: |
+          Host path where the podman socket will be located
 
   imageCleaner:
     type: object
@@ -406,12 +483,12 @@ properties:
       host:
         type: object
         additionalProperties: false
-        required: [enabled, dockerSocket, dockerLibDir]
+        required: [dockerSocket, dockerLibDir]
         properties:
           enabled:
             type: boolean
             description: |
-              TODO
+              DEPRECATED: use imageCleaner.enabled if the cleaner shall not used.
           dockerSocket:
             type: string
             description: |
@@ -479,7 +556,7 @@ properties:
         description: |
           The path type to use. The default value is 'Prefix'. Only applies on Kubernetes v1.18+.
 
-          See [the Kubernetes documentation](https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types) 
+          See [the Kubernetes documentation](https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types)
           for more details about path types.
       tls:
         type: array
@@ -561,3 +638,8 @@ properties:
     additionalProperties: true
     description: |
       DEPRECATED.
+
+# A placeholder as global values that can be referenced from the same location
+# of any chart should be possible to provide, but aren't necessarily provided or
+# used.
+global: {}

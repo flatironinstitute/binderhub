@@ -27,28 +27,44 @@ spec:
         {{- . | toYaml | nindent 8 }}
         {{- end }}
       annotations:
-        # This lets us autorestart when the configmap changes!
-        checksum/config-map: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        # This lets us autorestart when the secret's pass-through config changes
+        checksum/config: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- . | toYaml | nindent 8 }}
         {{- end }}
     spec:
+      {{- with include "jupyterhub.imagePullSecrets" (dict "root" . "image" .Values.image) }}
+      imagePullSecrets: {{ . }}
+      {{- end }}
       {{- with .Values.initContainers }}
       initContainers:
         {{- . | toYaml | nindent 8 }}
       {{- end }}
       nodeSelector: {{ .Values.nodeSelector | toJson }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- . | toYaml | nindent 8 }}
+      {{- end }}
       {{- if .Values.rbac.enabled }}
       serviceAccountName: binderhub
       {{- end }}
       volumes:
       - name: config
-        configMap:
-          name: binder-config
-      - name: secret-config
         secret:
           secretName: binder-secret
+      {{- if .Values.extraFiles }}
+      - name: files
+        secret:
+          secretName: binder-secret
+          items:
+            {{- range $file_key, $file_details := .Values.extraFiles }}
+            - key: {{ $file_key | quote }}
+              path: {{ $file_key | quote }}
+              {{- with $file_details.mode }}
+              mode: {{ . }}
+              {{- end }}
+            {{- end }}
+      {{- end }}
       {{- if .Values.config.BinderHub.use_registry }}
       - name: docker-secret
         secret:
@@ -58,6 +74,7 @@ spec:
         hostPath:
           path: /var/run/docker.sock
       {{- end }}
+
       {{- with .Values.extraVolumes }}
       {{- . | toYaml | nindent 6 }}
       {{- end }}
@@ -74,8 +91,15 @@ spec:
         volumeMounts:
           - mountPath: /etc/binderhub/config/
             name: config
-          - mountPath: /etc/binderhub/secret/
-            name: secret-config
+            readOnly: true
+          {{- range $file_key, $file_details := .Values.extraFiles }}
+          - mountPath: {{ $file_details.mountPath }}
+            subPath: {{ $file_key | quote }}
+            {{- with $file_details.mode }}
+            mode: {{ . }}
+            {{- end }}
+            name: files
+          {{- end }}
           {{- if .Values.config.BinderHub.use_registry }}
           - mountPath: /root/.docker
             name: docker-secret
@@ -101,6 +125,8 @@ spec:
               name: "{{ include "jupyterhub.hub.fullname" . }}"
               key: hub.services.binder.apiToken
         {{- if .Values.config.BinderHub.auth_enabled }}
+        - name: JUPYTERHUB_SERVICE_NAME
+          value: binder
         - name: JUPYTERHUB_API_URL
           value: {{ (print (.Values.config.BinderHub.hub_url_local | default .Values.config.BinderHub.hub_url | trimSuffix "/") "/hub/api/") }}
         - name: JUPYTERHUB_BASE_URL
@@ -125,7 +151,7 @@ spec:
         {{- if .Values.deployment.readinessProbe.enabled }}
         readinessProbe:
           httpGet:
-            path: {{ .Values.config.BinderHub.base_url | default "/" }}versions
+            path: {{ .Values.config.BinderHub.base_url }}versions
             port: binder
           initialDelaySeconds: {{ .Values.deployment.readinessProbe.initialDelaySeconds }}
           periodSeconds: {{ .Values.deployment.readinessProbe.periodSeconds }}
@@ -135,7 +161,7 @@ spec:
         {{- if .Values.deployment.livenessProbe.enabled }}
         livenessProbe:
           httpGet:
-            path: {{ .Values.config.BinderHub.base_url | default "/" }}versions
+            path: {{ .Values.config.BinderHub.base_url }}versions
             port: binder
           initialDelaySeconds: {{ .Values.deployment.livenessProbe.initialDelaySeconds }}
           periodSeconds: {{ .Values.deployment.livenessProbe.periodSeconds }}

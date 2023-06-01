@@ -14,10 +14,13 @@ rbac:
   enabled: true
 
 nodeSelector: {}
+tolerations: []
 
 image:
   name: jupyterhub/k8s-binderhub
-  tag: 'local'
+  tag: "set-by-chartpress"
+  pullPolicy: ""
+  pullSecrets: []
 
 # registry here is only used to create docker config.json
 registry:
@@ -32,14 +35,24 @@ service:
   type: LoadBalancer
   labels: {}
   annotations:
-    prometheus.io/scrape: 'true'
+    prometheus.io/scrape: "true"
   nodePort:
   loadBalancerIP:
 
 config:
-  BinderHub: {}
+  # These c.BinderHub properties are referenced by the Helm chart
+  BinderHub:
+    # auth_enabled:
+    base_url: /
+    build_node_selector: {}
+    # hub_url:
+    # hub_url_local:
+    use_registry: true
+  KubernetesBuildExecutor: {}
 
 extraConfig: {}
+
+extraFiles: {}
 
 # Two bits of config need to be set to fully enable cors.
 # config.BinderHub.cors_allow_origin controls the allowed origins for the
@@ -58,26 +71,32 @@ jupyterhub:
     every: 3600
     maxAge: 604800
     concurrency: 4
-  rbac:
-    enabled: true
   hub:
     config:
       JupyterHub:
         authenticator_class: nullauthenticator.NullAuthenticator
       BinderSpawner:
         auth_enabled: false
+    loadRoles:
+      binder:
+        services:
+          - binder
+        scopes:
+          - servers
+          # we don't need admin:users if auth is not enabled!
+          - "admin:users"
     extraConfig:
       0-binderspawnermixin: |
         """
         Helpers for creating BinderSpawners
 
         FIXME:
-        This file is defined in helm-chart/binderhub/values.yaml and is copied to
-        binderhub/binderspawner_mixin.py by setup.py so that it can be used by other JupyterHub
-        container spawners.
+        This file is defined in binderhub/binderspawner_mixin.py
+        and is copied to helm-chart/binderhub/values.yaml
+        by ci/check_embedded_chart_code.py
 
-        The BinderHub repo is just used as the distribution mechanism for this spawner, BinderHub
-        itself doesn't require this code.
+        The BinderHub repo is just used as the distribution mechanism for this spawner,
+        BinderHub itself doesn't require this code.
 
         Longer term options include:
         - Move BinderSpawnerMixin to a separate Python package and include it in the Z2JH Hub
@@ -86,8 +105,8 @@ jupyterhub:
         - Duplicate the code here and in binderhub/binderspawner_mixin.py
         """
         from tornado import web
-        from traitlets.config import Configurable
         from traitlets import Bool, Unicode
+        from traitlets.config import Configurable
 
 
         class BinderSpawnerMixin(Configurable):
@@ -105,7 +124,7 @@ jupyterhub:
                 # classes using traitlets?
                 # https://stackoverflow.com/questions/9575409/calling-parent-class-init-with-multiple-inheritance-whats-the-right-way
                 # https://github.com/ipython/traitlets/pull/175
-                super(BinderSpawnerMixin, self).__init__(*args, **kwargs)
+                super().__init__(*args, **kwargs)
 
             auth_enabled = Bool(
                 False,
@@ -115,7 +134,7 @@ jupyterhub:
                 Requires `jupyterhub-singleuser` to be available inside the repositories
                 being built.
                 """,
-                config=True
+                config=True,
             )
 
             cors_allow_origin = Unicode(
@@ -130,7 +149,7 @@ jupyterhub:
                 See also BinderHub.cors_allow_origin in binderhub config
                 for controlling CORS policy for the BinderHub API endpoint.
                 """,
-                config=True
+                config=True,
             )
 
             def get_args(self):
@@ -138,29 +157,33 @@ jupyterhub:
                     args = super().get_args()
                 else:
                     args = [
-                        '--ip=0.0.0.0',
-                        f'--port={self.port}',
-                        f'--NotebookApp.base_url={self.server.base_url}',
+                        "--ip=0.0.0.0",
+                        f"--port={self.port}",
+                        f"--NotebookApp.base_url={self.server.base_url}",
                         f"--NotebookApp.token={self.user_options['token']}",
-                        '--NotebookApp.trust_xheaders=True',
+                        "--NotebookApp.trust_xheaders=True",
                     ]
                     if self.default_url:
-                        args.append(f'--NotebookApp.default_url={self.default_url}')
+                        args.append(f"--NotebookApp.default_url={self.default_url}")
 
                     if self.cors_allow_origin:
-                        args.append('--NotebookApp.allow_origin=' + self.cors_allow_origin)
+                        args.append("--NotebookApp.allow_origin=" + self.cors_allow_origin)
                     # allow_origin=* doesn't properly allow cross-origin requests to single files
                     # see https://github.com/jupyter/notebook/pull/5898
-                    if self.cors_allow_origin == '*':
-                        args.append('--NotebookApp.allow_origin_pat=.*')
+                    if self.cors_allow_origin == "*":
+                        args.append("--NotebookApp.allow_origin_pat=.*")
                     args += self.args
+                    # ServerApp compatibility: duplicate NotebookApp args
+                    for arg in list(args):
+                        if arg.startswith("--NotebookApp."):
+                            args.append(arg.replace("--NotebookApp.", "--ServerApp."))
                 return args
 
             def start(self):
                 if not self.auth_enabled:
-                    if 'token' not in self.user_options:
+                    if "token" not in self.user_options:
                         raise web.HTTPError(400, "token required")
-                    if 'image' not in self.user_options:
+                    if "image" not in self.user_options:
                         raise web.HTTPError(400, "image required")
 
                 for k, v in self.user_options.items():
@@ -332,11 +355,10 @@ jupyterhub:
 
     services:
       binder:
-        admin: true
-        apiToken:
+        display: false
   singleuser:
-    # start notebook server with lab ui as default
-    # *if available*
+    # start jupyterlab server *if available*
+    # fallback on jupyter-notebook
     cmd:
       - python3
       - "-c"
@@ -346,18 +368,24 @@ jupyterhub:
 
         try:
             import jupyterlab
+            import jupyterlab.labapp
             major = int(jupyterlab.__version__.split(".", 1)[0])
-        except Exception:
+        except Exception as e:
+            print("Failed to import jupyterlab: {e}", file=sys.stderr)
             have_lab = False
         else:
             have_lab = major >= 3
 
-        if have_lab and "NotebookApp.default_url" not in " ".join(sys.argv):
-            # if recent-enough lab is available, make it the default UI
-            sys.argv.insert(1, "--NotebookApp.default_url=/lab/")
+        if have_lab:
+            # technically, we could accept another jupyter-server-based frontend
+            print("Launching jupyter-lab", file=sys.stderr)
+            exe = "jupyter-lab"
+        else:
+            print("jupyter-lab not found, launching jupyter-notebook", file=sys.stderr)
+            exe = "jupyter-notebook"
 
         # launch the notebook server
-        os.execvp("jupyter-notebook", sys.argv)
+        os.execvp(exe, sys.argv)
     events: true
     storage:
       type: none
@@ -374,7 +402,7 @@ deployment:
     enabled: true
     initialDelaySeconds: 0
     periodSeconds: 5
-    failureThreshold: 1000  # we rely on the liveness probe to resolve issues if needed
+    failureThreshold: 1000 # we rely on the liveness probe to resolve issues if needed
     timeoutSeconds: 3
   livenessProbe:
     enabled: true
@@ -384,13 +412,16 @@ deployment:
     timeoutSeconds: 10
   labels: {}
 
+imageBuilderType: "host"
+
 dind:
-  enabled: false
   initContainers: []
   daemonset:
     image:
-      name: docker
-      tag: 20.10.12-dind
+      name: docker.io/library/docker
+      tag: "24.0.1-dind" # ref: https://hub.docker.com/_/docker/tags
+      pullPolicy: ""
+      pullSecrets: []
     # Additional command line arguments to pass to dockerd
     extraArgs: []
     lifecycle: {}
@@ -401,11 +432,29 @@ dind:
   hostSocketDir: /var/run/dind
   hostLibDir: /var/lib/dind
 
+# Podman in Kubernetes
+pink:
+  initContainers: []
+  daemonset:
+    image:
+      name: quay.io/podman/stable
+      tag: "v4.5.0" # ref: https://quay.io/repository/podman/stable
+      pullPolicy: ""
+      pullSecrets: []
+    lifecycle: {}
+    extraVolumes: []
+    extraVolumeMounts: []
+  resources: {}
+  hostStorageDir: /var/lib/pink/storage
+  hostSocketDir: /var/run/pink
+
 imageCleaner:
   enabled: true
   image:
     name: quay.io/jupyterhub/docker-image-cleaner
-    tag: 1.0.0-alpha.2
+    tag: "1.0.0-beta.3"
+    pullPolicy: ""
+    pullSecrets: []
   # delete an image at most every 5 seconds
   delay: 5
   # Interpret threshold values as percentage or bytes
@@ -415,8 +464,8 @@ imageCleaner:
   imageGCThresholdHigh: 80
   imageGCThresholdLow: 60
   # cull images on the host docker as well as dind
+  # configuration to use if `imageBuilderType: host` is configured
   host:
-    enabled: true
     dockerSocket: /var/run/docker.sock
     dockerLibDir: /var/lib/docker
 
@@ -427,14 +476,16 @@ ingress:
     type: kube-lego
   hosts: []
   ingressClassName:
-  annotations: {}
+  annotations:
+    {}
     # kubernetes.io/ingress.class: nginx
     # kubernetes.io/tls-acme: "true"
   pathSuffix:
     # Suffix added to Ingress's routing path pattern.
     # Specify `*` if your ingress matches path by glob pattern.
   pathType: Prefix
-  tls: []
+  tls:
+    []
     # Secrets must be manually created in the namespace.
     # - secretName: chart-example-tls
     #   hosts:
@@ -449,3 +500,5 @@ podAnnotations: {}
 
 # Deprecated values, kept here so we can provide useful error messages
 cors: {}
+
+global: {}

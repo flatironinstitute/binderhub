@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import secrets
+import warnings
 from binascii import a2b_hex
 from concurrent.futures import ThreadPoolExecutor
 from glob import glob
@@ -16,14 +17,16 @@ import ipaddress
 
 import kubernetes.client
 import kubernetes.config
-from jinja2 import Environment, FileSystemLoader, PrefixLoader, ChoiceLoader
+import tornado.ioloop
+import tornado.log
+import tornado.options
+import tornado.web
+from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader
+from jupyterhub.services.auth import HubOAuthCallbackHandler
+from jupyterhub.traitlets import Callable
 from tornado.httpclient import AsyncHTTPClient
 from tornado.httpserver import HTTPServer
-import tornado.ioloop
-import tornado.options
-import tornado.log
 from tornado.log import app_log
-import tornado.web
 from traitlets import (
     Bool,
     Bytes,
@@ -31,37 +34,40 @@ from traitlets import (
     Integer,
     Set,
     TraitError,
+    Type,
     Unicode,
     Union,
-    Type,
     default,
     observe,
     validate,
 )
 from traitlets.config import Application
-from jupyterhub.services.auth import HubOAuthCallbackHandler
-from jupyterhub.traitlets import Callable
 
 from .base import AboutHandler, Custom404, VersionHandler
-from .build import Build
+from .build import BuildExecutor, KubernetesBuildExecutor, KubernetesCleaner
 from .builder import BuildHandler
 from .config import ConfigHandler
-from .health import HealthHandler
+from .events import EventLog
+from .health import HealthHandler, KubernetesHealthHandler
 from .launcher import Launcher
 from .log import log_request
-from .ratelimit import RateLimiter
-from .repoproviders import RepoProvider
-from .registry import DockerRegistry
-from .main import MainHandler, ParameterizedMainHandler, LegacyRedirectHandler, UserRedirectHandler
-from .repoproviders import (GitHubRepoProvider, GitRepoProvider,
-                            GitLabRepoProvider, GistRepoProvider,
-                            ZenodoProvider, FigshareProvider, HydroshareProvider,
-                            DataverseProvider)
+from .main import LegacyRedirectHandler, MainHandler, ParameterizedMainHandler, UserRedirectHandler
 from .metrics import MetricsHandler
-
+from .quota import KubernetesLaunchQuota, LaunchQuota
+from .ratelimit import RateLimiter
+from .registry import DockerRegistry
+from .repoproviders import (
+    DataverseProvider,
+    FigshareProvider,
+    GistRepoProvider,
+    GitHubRepoProvider,
+    GitLabRepoProvider,
+    GitRepoProvider,
+    HydroshareProvider,
+    RepoProvider,
+    ZenodoProvider,
+)
 from .utils import ByteSpecification, url_path_join
-from .events import EventLog
-
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -69,32 +75,32 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 class BinderHub(Application):
     """An Application for starting a builder."""
 
-    @default('log_level')
+    @default("log_level")
     def _log_level(self):
         return logging.INFO
 
     aliases = {
-        'log-level': 'Application.log_level',
-        'f': 'BinderHub.config_file',
-        'config': 'BinderHub.config_file',
-        'port': 'BinderHub.port',
+        "log-level": "Application.log_level",
+        "f": "BinderHub.config_file",
+        "config": "BinderHub.config_file",
+        "port": "BinderHub.port",
     }
 
     flags = {
-        'debug': (
-            {'BinderHub': {'debug': True}},
-            "Enable debug HTTP serving & debug logging"
+        "debug": (
+            {"BinderHub": {"debug": True}},
+            "Enable debug HTTP serving & debug logging",
         )
     }
 
     config_file = Unicode(
-        'binderhub_config.py',
+        "binderhub_config.py",
         help="""
         Config file to load.
 
         If a relative path is provided, it is taken relative to current directory
         """,
-        config=True
+        config=True,
     )
 
     google_analytics_code = Unicode(
@@ -106,33 +112,33 @@ class BinderHub(Application):
         Note that we'll respect Do Not Track settings, despite the fact that GA does not.
         We will not load the GA scripts on browsers with DNT enabled.
         """,
-        config=True
+        config=True,
     )
 
     google_analytics_domain = Unicode(
-        'auto',
+        "auto",
         help="""
         The Google Analytics domain to use on the main page.
 
         By default this is set to 'auto', which sets it up for current domain and all
         subdomains. This can be set to a more restrictive domain here for better privacy
         """,
-        config=True
+        config=True,
     )
 
     about_message = Unicode(
-        '',
+        "",
         help="""
         Additional message to display on the about page.
 
         Will be directly inserted into the about page's source so you can use
         raw HTML.
         """,
-        config=True
+        config=True,
     )
 
     banner_message = Unicode(
-        '',
+        "",
         help="""
         Message to display in a banner on all pages.
 
@@ -140,7 +146,7 @@ class BinderHub(Application):
         with grey background, located at the top of the BinderHub pages. Raw
         HTML is supported.
         """,
-        config=True
+        config=True,
     )
 
     extra_footer_scripts = Dict(
@@ -154,19 +160,17 @@ class BinderHub(Application):
         Omit the <script> tag. This should be primarily used for
         analytics code.
         """,
-        config=True
+        config=True,
     )
 
-    base_url = Unicode(
-        '/',
-        help="The base URL of the entire application",
-        config=True)
-    @validate('base_url')
+    base_url = Unicode("/", help="The base URL of the entire application", config=True)
+
+    @validate("base_url")
     def _valid_base_url(self, proposal):
-        if not proposal.value.startswith('/'):
-            proposal.value = '/' + proposal.value
-        if not proposal.value.endswith('/'):
-            proposal.value = proposal.value + '/'
+        if not proposal.value.startswith("/"):
+            proposal.value = "/" + proposal.value
+        if not proposal.value.endswith("/"):
+            proposal.value = proposal.value + "/"
         return proposal.value
 
     badge_base_url = Union(
@@ -179,20 +183,20 @@ class BinderHub(Application):
         For example, you could get the badge_base_url from a custom HTTP
         header, the Referer header, or from a request parameter
         """,
-        config=True
+        config=True,
     )
 
-    @default('badge_base_url')
+    @default("badge_base_url")
     def _badge_base_url_default(self):
-        return ''
+        return ""
 
-    @validate('badge_base_url')
+    @validate("badge_base_url")
     def _valid_badge_base_url(self, proposal):
         if callable(proposal.value):
             return proposal.value
         # add a trailing slash only when a value is set
-        if proposal.value and not proposal.value.endswith('/'):
-            proposal.value = proposal.value + '/'
+        if proposal.value and not proposal.value.endswith("/"):
+            proposal.value = proposal.value + "/"
         return proposal.value
 
     cors_allow_origin = Unicode(
@@ -207,7 +211,7 @@ class BinderHub(Application):
         See also BinderSpawner.cors_allow_origin in the binderhub spawner
         mixin for setting this property on the spawned notebooks.
         """,
-        config=True
+        config=True,
     )
 
     auth_enabled = Bool(
@@ -215,18 +219,21 @@ class BinderHub(Application):
         help="""If JupyterHub authentication enabled,
         require user to login (don't create temporary users during launch) and
         start the new server for the logged in user.""",
-        config=True)
+        config=True,
+    )
 
     port = Integer(
         8585,
         help="""
         Port for the builder to listen on.
         """,
-        config=True
+        config=True,
     )
 
     appendix = Unicode(
         help="""
+        DEPRECATED: Use c.BuildExecutor.appendix
+
         Appendix to pass to repo2docker
 
         A multi-line string of Docker directives to run.
@@ -246,6 +253,8 @@ class BinderHub(Application):
     sticky_builds = Bool(
         False,
         help="""
+        DEPRECATED: Use c.KubernetesBuildExecutor.sticky_builds
+
         Attempt to assign builds for the same repository to the same node.
 
         In order to speed up re-builds of a repository all its builds will
@@ -264,17 +273,27 @@ class BinderHub(Application):
         Set to false to use only local docker images. Useful when running
         in a single node.
         """,
-        config=True
+        config=True,
     )
 
     build_class = Type(
-        Build,
+        KubernetesBuildExecutor,
+        klass=BuildExecutor,
         help="""
         The class used to build repo2docker images.
 
-        Must inherit from binderhub.build.Build
+        Must inherit from binderhub.build.BuildExecutor
         """,
-        config=True
+        config=True,
+    )
+
+    build_cleaner_class = Type(
+        KubernetesCleaner,
+        allow_none=True,
+        help="""
+        The class used to cleanup builders.
+        """,
+        config=True,
     )
 
     registry_class = Type(
@@ -284,8 +303,20 @@ class BinderHub(Application):
 
         Must inherit from binderhub.registry.DockerRegistry
         """,
-        config=True
+        config=True,
     )
+
+    health_handler_class = Type(
+        HealthHandler,
+        help="The Tornado /health handler class",
+        config=True,
+    )
+
+    @default("health_handler_class")
+    def _default_health_handler_class(self):
+        if issubclass(self.build_class, KubernetesBuildExecutor):
+            return KubernetesHealthHandler
+        return HealthHandler
 
     per_repo_quota = Integer(
         0,
@@ -302,6 +333,8 @@ class BinderHub(Application):
     pod_quota = Integer(
         None,
         help="""
+        DEPRECATED: Use c.LaunchQuota.total_quota
+
         The number of concurrent pods this hub has been designed to support.
 
         This quota is used as an indication for how much above or below the
@@ -317,6 +350,13 @@ class BinderHub(Application):
         config=True,
     )
 
+    @observe("pod_quota")
+    def _pod_quota_deprecated(self, change):
+        self.log.warning(
+            "BinderHub.pod_quota is deprecated, use LaunchQuota.total_quota"
+        )
+        self.config.LaunchQuota.total_quota = change.new
+
     per_repo_quota_higher = Integer(
         0,
         help="""
@@ -331,21 +371,36 @@ class BinderHub(Application):
         config=True,
     )
 
+    launch_quota_class = Type(
+        klass=LaunchQuota,
+        default_value=KubernetesLaunchQuota,
+        help="""
+        The class used to check quotas for launched servers.
+
+        Must inherit from binderhub.quota.LaunchQuota
+        """,
+        config=True,
+    )
+
     log_tail_lines = Integer(
         100,
         help="""
+        DEPRECATED: Use c.KubernetesBuildExecutor.log_tail_lines
+
         Limit number of log lines to show when connecting to an already running build.
         """,
         config=True,
     )
 
     push_secret = Unicode(
-        'binder-build-docker-config',
+        "binder-build-docker-config",
         allow_none=True,
         help="""
+        DEPRECATED: Use c.BuildExecutor.push_secret
+
         A kubernetes secret object that provides credentials for pushing built images.
         """,
-        config=True
+        config=True,
     )
 
     image_prefix = Unicode(
@@ -360,12 +415,14 @@ class BinderHub(Application):
 
         Defaults to "", which is probably not what you want :)
         """,
-        config=True
+        config=True,
     )
 
     build_memory_request = ByteSpecification(
         0,
         help="""
+        DEPRECATED: Use c.KubernetesBuildExecutor.memory_request
+
         Amount of memory to request when scheduling a build
 
         0 reserves no memory.
@@ -381,6 +438,8 @@ class BinderHub(Application):
     build_memory_limit = ByteSpecification(
         0,
         help="""
+        DEPRECATED: Use c.BuildExecutor.memory_limit
+
         Max amount of memory allocated for each image build process.
 
         0 sets no limit.
@@ -398,24 +457,29 @@ class BinderHub(Application):
         help="""
         Turn on debugging.
         """,
-        config=True
+        config=True,
     )
 
     build_docker_host = Unicode(
         "/var/run/docker.sock",
         config=True,
         help="""
+        DEPRECATED: Use c.KubernetesBuildExecutor.docker_host
+
         The docker URL repo2docker should use to build the images.
 
         Currently, only paths are supported, and they are expected to be available on
         all the hosts.
-        """
+        """,
     )
-    @validate('build_docker_host')
+
+    @validate("build_docker_host")
     def docker_build_host_validate(self, proposal):
         parts = urlparse(proposal.value)
-        if parts.scheme != 'unix' or parts.netloc != '':
-            raise TraitError("Only unix domain sockets on same node are supported for build_docker_host")
+        if parts.scheme != "unix" or parts.netloc != "":
+            raise TraitError(
+                "Only unix domain sockets on same node are supported for build_docker_host"
+            )
         return proposal.value
 
     build_docker_config = Dict(
@@ -430,17 +494,22 @@ class BinderHub(Application):
         have an effect, as the push_secrets will overwrite
         .docker/config.json
         In this case, make sure that you include your config in your push_secret
+
+        WARNING: The value of this parameter is managed by the binderHub Helm Chart.
+        It is not managed by the BinderHub application itself.
+        If you are running BinderHub in another way this parameter has no effect.
         """,
-        config=True
+        config=True,
     )
 
     hub_api_token = Unicode(
         help="""API token for talking to the JupyterHub API""",
         config=True,
     )
-    @default('hub_api_token')
+
+    @default("hub_api_token")
     def _default_hub_token(self):
-        return os.environ.get('JUPYTERHUB_API_TOKEN', '')
+        return os.environ.get("JUPYTERHUB_API_TOKEN", "")
 
     hub_url = Unicode(
         help="""
@@ -461,77 +530,90 @@ class BinderHub(Application):
         """,
         config=True,
     )
-    @default('hub_url_local')
+
+    @default("hub_url_local")
     def _default_hub_url_local(self):
         return self.hub_url
 
-    @validate('hub_url', 'hub_url_local')
+    @validate("hub_url", "hub_url_local")
     def _add_slash(self, proposal):
         """trait validator to ensure hub_url ends with a trailing slash"""
-        if proposal.value is not None and not proposal.value.endswith('/'):
-            return proposal.value + '/'
+        if proposal.value is not None and not proposal.value.endswith("/"):
+            return proposal.value + "/"
         return proposal.value
 
     build_namespace = Unicode(
         help="""
+        DEPRECATED: Use c.KubernetesBuildExecutor.namespace
+
         Kubernetes namespace to spawn build pods in.
 
         Note that the push_secret must refer to a secret in this namespace.
         """,
-        config=True
+        config=True,
     )
-    @default('build_namespace')
+
+    @default("build_namespace")
     def _default_build_namespace(self):
-        return os.environ.get('BUILD_NAMESPACE', 'default')
+        return os.environ.get("BUILD_NAMESPACE", "default")
 
     build_image = Unicode(
-        'quay.io/jupyterhub/repo2docker:2021.08.0',
+        "quay.io/jupyterhub/repo2docker:2022.10.0",
         help="""
+        DEPRECATED: Use c.KubernetesBuildExecutor.build_image
+
         The repo2docker image to be used for doing builds
         """,
-        config=True
+        config=True,
     )
 
     build_node_selector = Dict(
         {},
         config=True,
         help="""
+        DEPRECATED: Use c.KubernetesBuildExecutor.node_selector
+
         Select the node where build pod runs on.
-        """
+        """,
     )
 
     repo_providers = Dict(
         {
-            'gh': GitHubRepoProvider,
-            'gist': GistRepoProvider,
-            'git': GitRepoProvider,
-            'gl': GitLabRepoProvider,
-            'zenodo': ZenodoProvider,
-            'figshare': FigshareProvider,
-            'hydroshare': HydroshareProvider,
-            'dataverse': DataverseProvider,
+            "gh": GitHubRepoProvider,
+            "gist": GistRepoProvider,
+            "git": GitRepoProvider,
+            "gl": GitLabRepoProvider,
+            "zenodo": ZenodoProvider,
+            "figshare": FigshareProvider,
+            "hydroshare": HydroshareProvider,
+            "dataverse": DataverseProvider,
         },
         config=True,
         help="""
         List of Repo Providers to register and try
-        """
+        """,
     )
 
-    @validate('repo_providers')
+    @validate("repo_providers")
     def _validate_repo_providers(self, proposal):
         """trait validator to ensure there is at least one repo provider"""
         if not proposal.value:
             raise TraitError("Please provide at least one repo provider")
 
-        if any([not issubclass(provider, RepoProvider) for provider in proposal.value.values()]):
-            raise TraitError("Repository providers should inherit from 'binderhub.RepoProvider'")
+        if any(
+            [
+                not issubclass(provider, RepoProvider)
+                for provider in proposal.value.values()
+            ]
+        ):
+            raise TraitError(
+                "Repository providers should inherit from 'binderhub.RepoProvider'"
+            )
 
         return proposal.value
 
     concurrent_build_limit = Integer(
-        32,
-        config=True,
-        help="""The number of concurrent builds to allow."""
+        32, config=True, help="""The number of concurrent builds to allow."""
     )
     executor_threads = Integer(
         5,
@@ -546,7 +628,7 @@ class BinderHub(Application):
     build_cleanup_interval = Integer(
         60,
         config=True,
-        help="""Interval (in seconds) for how often stopped build pods will be deleted."""
+        help="""Interval (in seconds) for how often stopped build pods will be deleted.""",
     )
     build_max_age = Integer(
         3600 * 4,
@@ -555,8 +637,27 @@ class BinderHub(Application):
 
         Builds that are still running longer than this
         will be killed.
-        """
+        """,
     )
+
+    @observe("build_max_age")
+    def _build_max_age_changed(self, change):
+        if self.build_cleaner_class:
+            cleaner_name = self.build_cleaner_class.__name__
+        else:
+            cleaner_name = "CleanerName"
+
+        if cleaner_name in self.config:
+            cleaner_config = self.config[cleaner_name]
+            if "max_age" in cleaner_config:
+                # avoid warning about redundant deprecated config
+                # which can be kept for backward-compatibility
+                return
+
+        self.log.warning(
+            f"BinderHub.build_max_age is deprecated. Use `c.{cleaner_name}.max_age = {change.new}`"
+        )
+        self.config[cleaner_name].max_age = change.new
 
     build_token_check_origin = Bool(
         True,
@@ -564,7 +665,7 @@ class BinderHub(Application):
         help="""Whether to validate build token origin.
 
         False disables the origin check.
-        """
+        """,
     )
 
     build_token_expires_seconds = Integer(
@@ -611,7 +712,7 @@ class BinderHub(Application):
         If binderhub should try to continue to run without a working build infrastructure.
 
         Build infrastructure is kubernetes cluster + docker. This is useful for pure HTML/CSS/JS local development.
-        """
+        """,
     )
 
     ban_networks = Dict(
@@ -653,7 +754,7 @@ class BinderHub(Application):
         additional settings to pass through to tornado.
 
         can include things like additional headers, etc.
-        """
+        """,
     )
 
     template_variables = Dict(
@@ -666,31 +767,52 @@ class BinderHub(Application):
         config=True,
     )
 
-    @default('template_path')
+    @default("template_path")
     def _template_path_default(self):
-        return os.path.join(HERE, 'templates')
+        return os.path.join(HERE, "templates")
 
     extra_static_path = Unicode(
-        help='Path to search for extra static files.',
+        help="Path to search for extra static files.",
         config=True,
     )
 
     extra_static_url_prefix = Unicode(
-        '/extra_static/',
-        help='Url prefix to serve extra static files.',
+        "/extra_static/",
+        help="Url prefix to serve extra static files.",
         config=True,
     )
 
     normalized_origin = Unicode(
-        '',
+        "",
         config=True,
-        help='Origin to use when emitting events. Defaults to hostname of request when empty'
+        help="Origin to use when emitting events. Defaults to hostname of request when empty",
     )
 
     allowed_metrics_ips = Set(
         help='List of IPs or networks allowed to GET /metrics. Defaults to all.',
         config=True
     )
+
+    _build_config_deprecated_map = {
+        "appendix": ("BuildExecutor", "appendix"),
+        "push_secret": ("BuildExecutor", "push_secret"),
+        "build_memory_limit": ("BuildExecutor", "memory_limit"),
+        "sticky_builds": ("KubernetesBuildExecutor", "sticky_builds"),
+        "log_tail_lines": ("KubernetesBuildExecutor", "log_tail_lines"),
+        "build_memory_request": ("KubernetesBuildExecutor", "memory_request"),
+        "build_docker_host": ("KubernetesBuildExecutor", "docker_host"),
+        "build_namespace": ("KubernetesBuildExecutor", "namespace"),
+        "build_image": ("KubernetesBuildExecutor", "build_image"),
+        "build_node_selector": ("KubernetesBuildExecutor", "node_selector"),
+    }
+
+    @observe(*_build_config_deprecated_map)
+    def _build_config_deprecated(self, change):
+        dest_cls, dest_name = self._build_config_deprecated_map[change.name]
+        self.log.warning(
+            "BinderHub.%s is deprecated, use %s.%s", change.name, dest_cls, dest_name
+        )
+        self.config[dest_cls][dest_name] = change.new
 
     @staticmethod
     def add_url_prefix(prefix, handlers):
@@ -705,12 +827,15 @@ class BinderHub(Application):
         try:
             AsyncHTTPClient.configure("tornado.curl_httpclient.CurlAsyncHTTPClient")
         except ImportError as e:
-            self.log.debug("Could not load pycurl: %s\npycurl is recommended if you have a large number of users.", e)
+            self.log.warning(
+                "Could not load pycurl: %s\npycurl is recommended if you have a large number of users.",
+                e,
+            )
         # set max verbosity of curl_httpclient at INFO
         # because debug-logging from curl_httpclient
         # includes every full request and response
         if self.log_level < logging.INFO:
-            curl_log = logging.getLogger('tornado.curl_httpclient')
+            curl_log = logging.getLogger("tornado.curl_httpclient")
             curl_log.setLevel(logging.INFO)
 
     def initialize(self, *args, **kwargs):
@@ -732,7 +857,9 @@ class BinderHub(Application):
                 kubernetes.config.load_incluster_config()
             except kubernetes.config.ConfigException:
                 kubernetes.config.load_kube_config()
-            self.tornado_settings["kubernetes_client"] = self.kube_client = kubernetes.client.CoreV1Api()
+            self.tornado_settings[
+                "kubernetes_client"
+            ] = self.kube_client = kubernetes.client.CoreV1Api()
 
         # times 2 for log + build threads
         self.build_pool = ThreadPoolExecutor(self.concurrent_build_limit * 2)
@@ -740,18 +867,24 @@ class BinderHub(Application):
         # this should not be used for long-running requests
         self.executor = ThreadPoolExecutor(self.executor_threads)
 
-        jinja_options = dict(autoescape=True, )
+        jinja_options = dict(
+            autoescape=True,
+        )
         template_paths = [self.template_path]
         base_template_path = self._template_path_default()
         if base_template_path not in template_paths:
             # add base templates to the end, so they are looked up at last after custom templates
             template_paths.append(base_template_path)
-        loader = ChoiceLoader([
-            # first load base templates with prefix
-            PrefixLoader({'templates': FileSystemLoader([base_template_path])}, '/'),
-            # load all templates
-            FileSystemLoader(template_paths)
-        ])
+        loader = ChoiceLoader(
+            [
+                # first load base templates with prefix
+                PrefixLoader(
+                    {"templates": FileSystemLoader([base_template_path])}, "/"
+                ),
+                # load all templates
+                FileSystemLoader(template_paths),
+            ]
+        )
         jinja_env = Environment(loader=loader, **jinja_options)
         if self.use_registry:
             registry = self.registry_class(parent=self)
@@ -768,48 +901,46 @@ class BinderHub(Application):
 
         self.event_log = EventLog(parent=self)
 
-        for schema_file in glob(os.path.join(HERE, 'event-schemas','*.json')):
+        for schema_file in glob(os.path.join(HERE, "event-schemas", "*.json")):
             with open(schema_file) as f:
                 self.event_log.register_schema(json.load(f))
 
+        launch_quota = self.launch_quota_class(parent=self, executor=self.executor)
+
+        # Construct a Builder so that we can extract parameters such as the
+        # configuration or the version string to pass to /version and /health handlers
+        example_builder = self.build_class(parent=self)
         self.tornado_settings.update(
             {
                 "log_function": log_request,
-                "push_secret": self.push_secret,
                 "image_prefix": self.image_prefix,
                 "debug": self.debug,
                 "hub_url": self.hub_url,
                 "launcher": self.launcher,
-                "appendix": self.appendix,
                 "ban_networks": self.ban_networks,
                 "ban_networks_min_prefix_len": self.ban_networks_min_prefix_len,
-                "build_namespace": self.build_namespace,
-                "build_image": self.build_image,
-                "build_node_selector": self.build_node_selector,
                 "build_pool": self.build_pool,
                 "build_token_check_origin": self.build_token_check_origin,
                 "build_token_secret": self.build_token_secret,
                 "build_token_expires_seconds": self.build_token_expires_seconds,
-                "sticky_builds": self.sticky_builds,
-                "log_tail_lines": self.log_tail_lines,
+                "example_builder": example_builder,
                 "pod_quota": self.pod_quota,
                 "per_repo_quota": self.per_repo_quota,
                 "per_repo_quota_higher": self.per_repo_quota_higher,
                 "repo_providers": self.repo_providers,
+                "launch_quota": launch_quota,
                 "rate_limiter": RateLimiter(parent=self),
                 "use_registry": self.use_registry,
                 "build_class": self.build_class,
                 "registry": registry,
                 "traitlets_config": self.config,
+                "traitlets_parent": self,
                 "google_analytics_code": self.google_analytics_code,
                 "google_analytics_domain": self.google_analytics_domain,
                 "about_message": self.about_message,
                 "banner_message": self.banner_message,
                 "extra_footer_scripts": self.extra_footer_scripts,
                 "jinja2_env": jinja_env,
-                "build_memory_limit": self.build_memory_limit,
-                "build_memory_request": self.build_memory_request,
-                "build_docker_host": self.build_docker_host,
                 "build_docker_config": self.build_docker_config,
                 "base_url": self.base_url,
                 "badge_base_url": self.badge_base_url,
@@ -824,60 +955,87 @@ class BinderHub(Application):
             }
         )
         if self.auth_enabled:
-            self.tornado_settings['cookie_secret'] = os.urandom(32)
+            self.tornado_settings["cookie_secret"] = os.urandom(32)
         if self.cors_allow_origin:
-            self.tornado_settings.setdefault('headers', {})['Access-Control-Allow-Origin'] = self.cors_allow_origin
+            self.tornado_settings.setdefault("headers", {})[
+                "Access-Control-Allow-Origin"
+            ] = self.cors_allow_origin
 
         handlers = [
-            (r'/metrics', MetricsHandler),
-            (r'/versions', VersionHandler),
+            (r"/metrics", MetricsHandler),
+            (r"/versions", VersionHandler),
             (r"/build/([^/]+)/(.+)", BuildHandler),
             (r"/v2/([^/]+)/(.+)", ParameterizedMainHandler),
             (r"/repo/([^/]+)/([^/]+)(/.*)?", LegacyRedirectHandler),
             (r'/~([^/]+/.*)', UserRedirectHandler),
             # for backward-compatible mybinder.org badge URLs
             # /assets/images/badge.svg
-            (r'/assets/(images/badge\.svg)',
+            (
+                r"/assets/(images/badge\.svg)",
                 tornado.web.StaticFileHandler,
-                {'path': self.tornado_settings['static_path']}),
+                {"path": self.tornado_settings["static_path"]},
+            ),
             # /badge.svg
-            (r'/(badge\.svg)',
+            (
+                r"/(badge\.svg)",
                 tornado.web.StaticFileHandler,
-                {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
+                {"path": os.path.join(self.tornado_settings["static_path"], "images")},
+            ),
             # /badge_logo.svg
-            (r'/(badge\_logo\.svg)',
+            (
+                r"/(badge\_logo\.svg)",
                 tornado.web.StaticFileHandler,
-                {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
+                {"path": os.path.join(self.tornado_settings["static_path"], "images")},
+            ),
             # /logo_social.png
-            (r'/(logo\_social\.png)',
+            (
+                r"/(logo\_social\.png)",
                 tornado.web.StaticFileHandler,
-                {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
+                {"path": os.path.join(self.tornado_settings["static_path"], "images")},
+            ),
             # /favicon_XXX.ico
-            (r'/(favicon\_fail\.ico)',
+            (
+                r"/(favicon\_fail\.ico)",
                 tornado.web.StaticFileHandler,
-                {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
-            (r'/(favicon\_success\.ico)',
+                {"path": os.path.join(self.tornado_settings["static_path"], "images")},
+            ),
+            (
+                r"/(favicon\_success\.ico)",
                 tornado.web.StaticFileHandler,
-                {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
-            (r'/(favicon\_building\.ico)',
+                {"path": os.path.join(self.tornado_settings["static_path"], "images")},
+            ),
+            (
+                r"/(favicon\_building\.ico)",
                 tornado.web.StaticFileHandler,
-                {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
-            (r'/about', AboutHandler),
-            (r'/health', HealthHandler, {'hub_url': self.hub_url_local}),
-            (r'/_config', ConfigHandler),
-            (r'/', MainHandler),
-            (r'.*', Custom404),
+                {"path": os.path.join(self.tornado_settings["static_path"], "images")},
+            ),
+            (r"/about", AboutHandler),
+            (r"/health", self.health_handler_class, {"hub_url": self.hub_url_local}),
+            (r"/_config", ConfigHandler),
+            (r"/", MainHandler),
+            (r".*", Custom404),
         ]
         handlers = self.add_url_prefix(self.base_url, handlers)
         if self.extra_static_path:
-            handlers.insert(-1, (re.escape(url_path_join(self.base_url, self.extra_static_url_prefix)) + r"(.*)",
-                                 tornado.web.StaticFileHandler,
-                                 {'path': self.extra_static_path}))
+            handlers.insert(
+                -1,
+                (
+                    re.escape(
+                        url_path_join(self.base_url, self.extra_static_url_prefix)
+                    )
+                    + r"(.*)",
+                    tornado.web.StaticFileHandler,
+                    {"path": self.extra_static_path},
+                ),
+            )
         if self.auth_enabled:
-            oauth_redirect_uri = os.getenv('JUPYTERHUB_OAUTH_CALLBACK_URL') or \
-                                 url_path_join(self.base_url, 'oauth_callback')
+            oauth_redirect_uri = os.getenv(
+                "JUPYTERHUB_OAUTH_CALLBACK_URL"
+            ) or url_path_join(self.base_url, "oauth_callback")
             oauth_redirect_uri = urlparse(oauth_redirect_uri).path
-            handlers.insert(-1, (re.escape(oauth_redirect_uri), HubOAuthCallbackHandler))
+            handlers.insert(
+                -1, (re.escape(oauth_redirect_uri), HubOAuthCallbackHandler)
+            )
         self.tornado_app = tornado.web.Application(handlers, **self.tornado_settings)
 
     def stop(self):
@@ -885,25 +1043,23 @@ class BinderHub(Application):
         self.build_pool.shutdown()
 
     async def watch_build_pods(self):
-        """Watch build pods
+        warnings.warn(
+            "watch_build_pods() is deprecated, use watch_builders()", DeprecationWarning
+        )
+        await self.watch_builders()
 
-        Every build_cleanup_interval:
-        - delete stopped build pods
-        - delete running build pods older than build_max_age
+    async def watch_builders(self):
         """
-        while True:
+        Watch builders, run a cleanup function every build_cleanup_interval
+        """
+        while self.build_cleaner_class:
+            cleaner = self.build_cleaner_class(
+                kube=self.kube_client, namespace=self.build_namespace, parent=self
+            )
             try:
-                await asyncio.wrap_future(
-                    self.executor.submit(
-                        lambda: Build.cleanup_builds(
-                            self.kube_client,
-                            self.build_namespace,
-                            self.build_max_age,
-                        )
-                    )
-                )
+                await asyncio.wrap_future(self.executor.submit(cleaner.cleanup))
             except Exception:
-                app_log.exception("Failed to cleanup build pods")
+                app_log.exception("Failed to cleanup builders")
             await asyncio.sleep(self.build_cleanup_interval)
 
     def start(self, run_loop=True):
@@ -914,12 +1070,12 @@ class BinderHub(Application):
         )
         self.http_server.listen(self.port)
         if self.builder_required:
-            asyncio.ensure_future(self.watch_build_pods())
+            asyncio.ensure_future(self.watch_builders())
         if run_loop:
             tornado.ioloop.IOLoop.current().start()
 
 
 main = BinderHub.launch_instance
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
