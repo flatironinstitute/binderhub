@@ -226,50 +226,11 @@ jupyterhub:
           'admin': True,
           'command': ['python3', '-m', 'jupyterhub_idle_culler',
             '--url=http://127.0.0.1:8081/hub/hub/api',
-            '--timeout=604800',
+            '--timeout=2500000',
             '--cull-every=86400',
             '--concurrency=4',
             '--cull-users'
           ]})
-
-      delete_user_pvc: |
-        import string
-        import escapism
-        import oauthenticator
-        import kubernetes.client
-        import tornado.concurrent
-        import concurrent.futures
-
-        pvc_name_template = get_config('singleuser.storage.dynamic.pvcNameTemplate')
-        pvc_namespace = os.environ.get('POD_NAMESPACE', 'default')
-
-        class BinderAuthenticator(oauthenticator.GoogleOAuthenticator):
-            executor = concurrent.futures.ThreadPoolExecutor(1)
-
-            @tornado.concurrent.run_on_executor
-            def delete_pvc(self, user):
-                safe_chars = set(string.ascii_lowercase + string.digits)
-                legacy_escaped_username = ''.join([s if s in safe_chars else '-' for s in user.name.lower()])
-                safe_username = escapism.escape(user.name, safe=safe_chars, escape_char='-').lower()
-                name = pvc_name_template.format(
-                    userid=user.id,
-                    username=safe_username,
-                    unescaped_username=user.name,
-                    legacy_escape_username=legacy_escaped_username,
-                    servername='',
-                    unescaped_servername=''
-                )
-                try:
-                    kubernetes.client.CoreV1Api().delete_namespaced_persistent_volume_claim(name, pvc_namespace, body=kubernetes.client.V1DeleteOptions())
-                except kubernetes.client.rest.ApiException as e:
-                    if e.status != 404:
-                      self.log.warn("Error deleting user PVC %s: %s", name, e)
-
-            def delete_user(self, user):
-                self.delete_pvc(user)
-                return super().delete_user(user)
-
-        c.JupyterHub.authenticator_class = BinderAuthenticator
 
       monitor: |
         from jupyterhub.handlers import BaseHandler
@@ -279,10 +240,73 @@ jupyterhub:
         import datetime
         from kubespawner.clients import shared_client
         from kubespawner import KubeSpawner
-        from kubernetes.dynamic import DynamicClient
-        from kubernetes.dynamic.exceptions import ResourceNotFoundError
-        from kubernetes.client.exceptions import ApiException
-        from kubernetes.utils import parse_quantity
+        #from kubernetes_asyncio.dynamic import DynamicClient
+        #from kubernetes_asyncio.dynamic.exceptions import ResourceNotFoundError
+        from kubernetes_asyncio.client.exceptions import ApiException
+        #from kubernetes_asyncio.utils import parse_quantity
+
+        # https://github.com/kubernetes-client/python/blob/master/kubernetes/utils/quantity.py
+        from decimal import Decimal, InvalidOperation
+
+        def parse_quantity(quantity):
+            """
+            Parse kubernetes canonical form quantity like 200Mi to a decimal number.
+            Supported SI suffixes:
+            base1024: Ki | Mi | Gi | Ti | Pi | Ei
+            base1000: n | u | m | "" | k | M | G | T | P | E
+
+            See https://github.com/kubernetes/apimachinery/blob/master/pkg/api/resource/quantity.go
+
+            Input:
+            quantity: string. kubernetes canonical form quantity
+
+            Returns:
+            Decimal
+
+            Raises:
+            ValueError on invalid or unknown input
+            """
+            if isinstance(quantity, (int, float, Decimal)):
+                return Decimal(quantity)
+
+            exponents = {"n": -3, "u": -2, "m": -1, "K": 1, "k": 1, "M": 2,
+                         "G": 3, "T": 4, "P": 5, "E": 6}
+
+            quantity = str(quantity)
+            number = quantity
+            suffix = None
+            if len(quantity) >= 2 and quantity[-1] == "i":
+                if quantity[-2] in exponents:
+                    number = quantity[:-2]
+                    suffix = quantity[-2:]
+            elif len(quantity) >= 1 and quantity[-1] in exponents:
+                number = quantity[:-1]
+                suffix = quantity[-1:]
+
+            try:
+                number = Decimal(number)
+            except InvalidOperation:
+                raise ValueError("Invalid number format: {}".format(number))
+
+            if suffix is None:
+                return number
+
+            if suffix.endswith("i"):
+                base = 1024
+            elif len(suffix) == 1:
+                base = 1000
+            else:
+                raise ValueError("{} has unknown suffix".format(quantity))
+
+            # handle SI inconsistency
+            if suffix == "ki":
+                raise ValueError("{} has unknown suffix".format(quantity))
+
+            if suffix[0] not in exponents:
+                raise ValueError("{} has unknown suffix".format(quantity))
+
+            exponent = Decimal(exponents[suffix[0]])
+            return number * (base ** exponent)
 
         import z2jh
         allowed = list(map(ipaddress.ip_network, z2jh.get_config('config.Monitor.allowed_monitor_ips', [])))
@@ -291,10 +315,11 @@ jupyterhub:
             def collect(self):
                 pods = KubeSpawner.reflectors['pods']
                 if not pods: return []
-                try:
-                    api = DynamicClient(shared_client('ApiClient')).resources.get(api_version='metrics.k8s.io/v1beta1', kind='PodMetrics')
-                except ResourceNotFoundError:
-                    api = None
+                #try:
+                #  api = DynamicClient(shared_client('ApiClient')).resources.get(api_version='metrics.k8s.io/v1beta1', kind='PodMetrics')
+                #except ResourceNotFoundError:
+                #  api = None
+                api = None
 
                 l = ['user','specuser','specproj']
                 run = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_servers', 'Running binderhub jupyter servers', labels=l)
