@@ -240,8 +240,8 @@ jupyterhub:
         import datetime
         from kubespawner.clients import shared_client
         from kubespawner import KubeSpawner
-        #from kubernetes_asyncio.dynamic import DynamicClient
-        #from kubernetes_asyncio.dynamic.exceptions import ResourceNotFoundError
+        from kubernetes_asyncio.dynamic import DynamicClient
+        from kubernetes_asyncio.dynamic.exceptions import ResourceNotFoundError
         from kubernetes_asyncio.client.exceptions import ApiException
         #from kubernetes_asyncio.utils import parse_quantity
 
@@ -315,11 +315,10 @@ jupyterhub:
             def collect(self):
                 pods = KubeSpawner.reflectors['pods']
                 if not pods: return []
-                #try:
-                #  api = DynamicClient(shared_client('ApiClient')).resources.get(api_version='metrics.k8s.io/v1beta1', kind='PodMetrics')
-                #except ResourceNotFoundError:
-                #  api = None
-                api = None
+                try:
+                    api = DynamicClient(shared_client('ApiClient')).resources.get(api_version='metrics.k8s.io/v1beta1', kind='PodMetrics')
+                except ResourceNotFoundError:
+                    api = None
 
                 l = ['user','specuser','specproj']
                 run = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_servers', 'Running binderhub jupyter servers', labels=l)
