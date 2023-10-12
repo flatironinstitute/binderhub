@@ -444,7 +444,7 @@ dind:
   daemonset:
     image:
       name: docker.io/library/docker
-      tag: "24.0.2-dind" # ref: https://hub.docker.com/_/docker/tags
+      tag: "24.0.6-dind" # ref: https://hub.docker.com/_/docker/tags
       pullPolicy: ""
       pullSecrets: []
     # Additional command line arguments to pass to dockerd
@@ -463,7 +463,7 @@ pink:
   daemonset:
     image:
       name: quay.io/podman/stable
-      tag: "v4.5.0" # ref: https://quay.io/repository/podman/stable
+      tag: "v4.7.0" # ref: https://quay.io/repository/podman/stable
       pullPolicy: ""
       pullSecrets: []
     lifecycle: {}

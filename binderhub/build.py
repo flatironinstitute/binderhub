@@ -16,7 +16,7 @@ import kubernetes.config
 from kubernetes import client, watch
 from tornado.ioloop import IOLoop
 from tornado.log import app_log
-from traitlets import Any, Bool, Dict, Integer, Unicode, default
+from traitlets import Any, Bool, Dict, Integer, List, Unicode, default
 from traitlets.config import LoggingConfigurable
 
 from .utils import KUBE_REQUEST_TIMEOUT, ByteSpecification, rendezvous_rank
@@ -87,7 +87,21 @@ class BuildExecutor(LoggingConfigurable):
 
     push_secret = Unicode(
         "",
-        help="Implementation dependent secret for pushing image to a registry.",
+        help="Implementation dependent static secret for pushing image to a registry.",
+        config=True,
+    )
+
+    registry_credentials = Dict(
+        {},
+        help=(
+            "Implementation dependent credentials for pushing image to a registry. "
+            "For example, if push tokens are temporary this could be used to pass "
+            "dynamically created credentials "
+            '`{"registry": "docker.io", "username":"user", "password":"password"}`. '
+            "This will be JSON encoded and passed in the environment variable "
+            "CONTAINER_ENGINE_REGISTRY_CREDENTIALS` to repo2docker. "
+            "If provided this will be used instead of push_secret."
+        ),
         config=True,
     )
 
@@ -108,6 +122,15 @@ class BuildExecutor(LoggingConfigurable):
             "Metadata about the builder e.g. repo2docker version. "
             "This is included in the BinderHub version endpoint"
         ),
+        config=True,
+    )
+
+    repo2docker_extra_args = List(
+        Unicode,
+        default_value=[],
+        help="""
+        Extra commandline parameters to be passed to jupyter-repo2docker during build
+        """,
         config=True,
     )
 
@@ -141,6 +164,8 @@ class BuildExecutor(LoggingConfigurable):
         if self.memory_limit:
             r2d_options.append("--build-memory-limit")
             r2d_options.append(str(self.memory_limit))
+
+        r2d_options += self.repo2docker_extra_args
 
         return r2d_options
 
@@ -231,7 +256,26 @@ class KubernetesBuildExecutor(BuildExecutor):
     # Overrides the default for BuildExecutor
     push_secret = Unicode(
         "binder-build-docker-config",
-        help="Implementation dependent secret for pushing image to a registry.",
+        help=(
+            "Name of a Kubernetes secret containing static credentials for pushing "
+            "an image to a registry."
+        ),
+        config=True,
+    )
+
+    registry_credentials = Dict(
+        {},
+        help=(
+            "Implementation dependent credentials for pushing image to a registry. "
+            "For example, if push tokens are temporary this could be used to pass "
+            "dynamically created credentials "
+            '`{"registry": "docker.io", "username":"user", "password":"password"}`. '
+            "This will be JSON encoded and passed in the environment variable "
+            "CONTAINER_ENGINE_REGISTRY_CREDENTIALS` to repo2docker. "
+            "If provided this will be used instead of push_secret. "
+            "Currently this is passed to the build pod as a plain text environment "
+            "variable, though future implementations may use a Kubernetes secret."
+        ),
         config=True,
     )
 
@@ -244,7 +288,7 @@ class KubernetesBuildExecutor(BuildExecutor):
         return os.getenv("BUILD_NAMESPACE", "default")
 
     build_image = Unicode(
-        "quay.io/jupyterhub/repo2docker:2022.10.0",
+        "quay.io/jupyterhub/repo2docker:2023.06.0",
         help="Docker image containing repo2docker that is used to spawn the build pods.",
         config=True,
     )
@@ -394,7 +438,23 @@ class KubernetesBuildExecutor(BuildExecutor):
             )
         ]
 
-        if self.push_secret:
+        env = [
+            client.V1EnvVar(name=key, value=value)
+            for key, value in self.extra_envs.items()
+        ]
+        if self.git_credentials:
+            env.append(
+                client.V1EnvVar(name="GIT_CREDENTIAL_ENV", value=self.git_credentials)
+            )
+
+        if self.registry_credentials:
+            env.append(
+                client.V1EnvVar(
+                    name="CONTAINER_ENGINE_REGISTRY_CREDENTIALS",
+                    value=json.dumps(self.registry_credentials),
+                )
+            )
+        elif self.push_secret:
             volume_mounts.append(
                 client.V1VolumeMount(mount_path="/root/.docker", name="docker-config")
             )
@@ -403,15 +463,6 @@ class KubernetesBuildExecutor(BuildExecutor):
                     name="docker-config",
                     secret=client.V1SecretVolumeSource(secret_name=self.push_secret),
                 )
-            )
-
-        env = [
-            client.V1EnvVar(name=key, value=value)
-            for key, value in self.extra_envs.items()
-        ]
-        if self.git_credentials:
-            env.append(
-                client.V1EnvVar(name="GIT_CREDENTIAL_ENV", value=self.git_credentials)
             )
 
         if os.path.isabs(self.repo_url) and os.path.isdir(self.repo_url):

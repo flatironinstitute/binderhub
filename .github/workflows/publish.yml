@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.ref == 'refs/heads/main')
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           # chartpress requires the full history
           fetch-depth: 0
@@ -44,10 +44,10 @@ jobs:
           python-version: "3.11"
 
       - name: Set up QEMU (for docker buildx)
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx (for chartpress multi-arch builds)
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Install chart publishing dependencies (chartpress, helm)
         run: |
@@ -103,7 +103,7 @@ jobs:
   PyPI-testbuild:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           # Versioneer requires past tags
           fetch-depth: 0

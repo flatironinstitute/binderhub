@@ -13,7 +13,7 @@ from kubernetes import client
 from tornado.httputil import url_concat
 from tornado.queues import Queue
 
-from binderhub.build import KubernetesBuildExecutor, ProgressEvent
+from binderhub.build import BuildExecutor, KubernetesBuildExecutor, ProgressEvent
 from binderhub.build_local import LocalRepo2dockerBuild, ProcessTerminated, _execute_cmd
 
 from .utils import async_requests
@@ -96,9 +96,59 @@ async def test_build(app, needs_build, needs_launch, always_build, slug, pytestc
     assert r.url.startswith(final["url"])
 
 
+@pytest.mark.asyncio(timeout=900)
+@pytest.mark.parametrize(
+    "app,build_only_query_param",
+    [
+        ("api_only_app", "True"),
+    ],
+    indirect=[
+        "app"
+    ],  # send param "api_only_app" to app fixture, so that it loads `enable_api_only_mode` configuration
+)
+async def test_build_only(app, build_only_query_param, needs_build):
+    """
+    Test build a repo that is very quick and easy to build.
+    """
+    slug = "gh/binderhub-ci-repos/cached-minimal-dockerfile/HEAD"
+    build_url = f"{app.url}/build/{slug}"
+    r = await async_requests.get(
+        build_url, stream=True, params={"build_only": build_only_query_param}
+    )
+    r.raise_for_status()
+    events = []
+    launch_events = 0
+    async for line in async_requests.iter_lines(r):
+        line = line.decode("utf8", "replace")
+        if line.startswith("data:"):
+            event = json.loads(line.split(":", 1)[1])
+            events.append(event)
+            assert "message" in event
+            sys.stdout.write(f"{event.get('phase', '')}: {event['message']}")
+            if event.get("phase") == "ready":
+                r.close()
+                break
+            if event.get("phase") == "info":
+                assert (
+                    "The built image will not be launched because the API only mode was enabled and the query parameter `build_only` was set to true"
+                    in event["message"]
+                )
+            if event.get("phase") == "launching" and not event["message"].startswith(
+                ("Launching server...", "Launch attempt ")
+            ):
+                # skip standard launching events of builder
+                # we are interested in launching events from spawner
+                launch_events += 1
+
+    assert launch_events == 0
+    final = events[-1]
+    assert "phase" in final
+    assert final["phase"] == "ready"
+
+
 @pytest.mark.asyncio(timeout=120)
 @pytest.mark.remote
-async def test_build_fail(app, needs_build, needs_launch, always_build, pytestconfig):
+async def test_build_fail(app, needs_build, needs_launch, always_build):
     """
     Test build a repo that should fail immediately.
     """
@@ -114,6 +164,60 @@ async def test_build_fail(app, needs_build, needs_launch, always_build, pytestco
             assert event.get("phase") not in ("launching", "ready")
             if event.get("phase") == "failed":
                 failed_events += 1
+                break
+    r.close()
+
+    assert failed_events > 0, "Should have seen phase 'failed'"
+
+
+@pytest.mark.asyncio(timeout=120)
+@pytest.mark.parametrize(
+    "app,build_only_query_param,expected_error_msg",
+    [
+        (
+            "app_without_require_build_only",
+            True,
+            "Building but not launching is not permitted",
+        ),
+    ],
+    indirect=[
+        "app"
+    ],  # send param "require_build_only_app" to app fixture, so that it loads `require_build_only` configuration
+)
+async def test_build_only_fail(
+    app, build_only_query_param, expected_error_msg, needs_build
+):
+    """
+    Test the scenarios that are expected to fail when setting configs for building but no launching.
+
+    Table for evaluating whether or not the image will be launched after build based on the values of
+    the `enable_api_only_mode` traitlet and the `build_only` query parameter.
+
+    | `enable_api_only_mode` trait | `build_only` query param | Outcome
+    ------------------------------------------------------------------------------------------------
+    |  false                     | missing                  | OK, image will be launched after build
+    |  false                     | false                    | OK, image will be launched after build
+    |  false                     | true                     | ERROR, building but not launching is not permitted when UI is still enabled
+    |  true                      | missing                  | OK, image will be launched after build
+    |  true                      | false                    | OK, image will be launched after build
+    |  true                      | true                     | OK, image won't be launched after build
+    """
+
+    slug = "gh/binderhub-ci-repos/cached-minimal-dockerfile/HEAD"
+    build_url = f"{app.url}/build/{slug}"
+    r = await async_requests.get(
+        build_url, stream=True, params={"build_only": build_only_query_param}
+    )
+    r.raise_for_status()
+    failed_events = 0
+    async for line in async_requests.iter_lines(r):
+        line = line.decode("utf8", "replace")
+        if line.startswith("data:"):
+            event = json.loads(line.split(":", 1)[1])
+            assert event.get("phase") not in ("launching", "ready")
+            if event.get("phase") == "failed":
+                failed_events += 1
+                assert expected_error_msg in event["message"]
                 break
     r.close()
 
@@ -415,3 +519,21 @@ def test_execute_cmd_break():
             lines.append(line)
     assert lines == ["1\n"]
     assert str(exc.value) == f"ProcessTerminated: {cmd}"
+
+
+def test_extra_r2d_options():
+    bex = BuildExecutor()
+    bex.repo2docker_extra_args = ["--repo-dir=/srv/repo"]
+    bex.image_name = "test:test"
+    bex.ref = "main"
+
+    assert bex.get_r2d_cmd_options() == [
+        "--ref=main",
+        "--image=test:test",
+        "--no-clean",
+        "--no-run",
+        "--json-logs",
+        "--user-name=jovyan",
+        "--user-id=1000",
+        "--repo-dir=/srv/repo",
+    ]
