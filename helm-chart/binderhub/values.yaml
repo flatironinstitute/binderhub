@@ -240,9 +240,13 @@ jupyterhub:
         import datetime
         from kubespawner.clients import shared_client
         from kubespawner import KubeSpawner
-        from kubernetes_asyncio.dynamic import DynamicClient
-        from kubernetes_asyncio.dynamic.exceptions import ResourceNotFoundError
         from kubernetes_asyncio.client.exceptions import ApiException
+        try:
+            from kubernetes_asyncio.dynamic import DynamicClient
+            from kubernetes_asyncio.dynamic.exceptions import ResourceNotFoundError
+        except ImportError:
+            DynamicClient = None
+            ResourceNotFoundError = TypeError
         #from kubernetes_asyncio.utils import parse_quantity
 
         # https://github.com/kubernetes-client/python/blob/master/kubernetes/utils/quantity.py
