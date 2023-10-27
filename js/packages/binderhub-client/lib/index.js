@@ -12,8 +12,8 @@ export class BinderRepository {
    *
    * @param {string} providerSpec Spec of the form <provider>/<repo>/<ref> to pass to the binderhub API.
    * @param {URL} buildEndpointUrl API URL of the build endpoint to talk to
-   * @param {string} buildToken Optional JWT based build token if this binderhub installation requires using build tokens
-   * @param {boolean} buildOnly Opt out of launching built image by default by passing `build_only` param
+   * @param {string} [buildToken] Optional JWT based build token if this binderhub installation requires using build tokens
+   * @param {boolean} [buildOnly] Opt out of launching built image by default by passing `build_only` param
    */
   constructor(providerSpec, buildEndpointUrl, buildToken, buildOnly) {
     this.providerSpec = providerSpec;
@@ -47,24 +47,24 @@ export class BinderRepository {
   /**
    * Call the binderhub API and yield responses as they come in
    *
-   * Returns an Async Generator yielding each item returned by the
+   * Returns an Async iterator yielding each item returned by the
    * server API.
    *
    * @typedef Line
-   * @prop {[string]} phase The phase the build is currently in. One of: building, built, fetching, launching, ready, unknown, waiting
-   * @prop {[string]} message Human readable message to display to the user. Extra newlines must *not* be added
-   * @prop {[string]} imageName (only with built) Full name of the image that has been built
-   * @prop {[string]} binder_launch_host (only with phase=ready) The host this binderhub API request was serviced by.
+   * @prop {string} [phase] The phase the build is currently in. One of: building, built, fetching, launching, ready, unknown, waiting
+   * @prop {string} [message] Human readable message to display to the user. Extra newlines must *not* be added
+   * @prop {string} [imageName] (only with built) Full name of the image that has been built
+   * @prop {string} [binder_launch_host] (only with phase=ready) The host this binderhub API request was serviced by.
    *                                     Could be different than the host the request was made to in federated cases
-   * @prop {[string]} binder_request (only with phase=ready) Request used to construct this image, of form v2/<provider>/<repo>/<ref>
-   * @prop {[string]} binder_persistent_request (only with phase=ready) Same as binder_request, but <ref> is fully resolved
-   * @prop {[string]} binder_ref_url (only with phase=ready) A URL to the repo provider where the repo can be browsed
-   * @prop {[string]} image (only with phase=ready) Full name of the image that has been built
-   * @prop {[string]} token (only with phase=ready) Token to use to authenticate with jupyter server at url
-   * @prop {[string]} url (only with phase=ready) URL where a jupyter server has been started
-   * @prop {[string]} repo_url (only with phase=ready) URL of the repository that is ready to be launched
+   * @prop {string} [binder_request] (only with phase=ready) Request used to construct this image, of form v2/<provider>/<repo>/<ref>
+   * @prop {string} [binder_persistent_request] (only with phase=ready) Same as binder_request, but <ref> is fully resolved
+   * @prop {string} [binder_ref_url] (only with phase=ready) A URL to the repo provider where the repo can be browsed
+   * @prop {string} [image] (only with phase=ready) Full name of the image that has been built
+   * @prop {string} [token] (only with phase=ready) Token to use to authenticate with jupyter server at url
+   * @prop {string} [url] (only with phase=ready) URL where a jupyter server has been started
+   * @prop {string} [repo_url] (only with phase=ready) URL of the repository that is ready to be launched
    *
-   * @returns {AsyncGenerator<Line>} An async generator yielding responses from the API as they come in
+   * @returns {AsyncIterable<Line>} An async iterator yielding responses from the API as they come in
    */
   fetch() {
     this.eventSource = new EventSource(this.buildUrl);
@@ -109,8 +109,8 @@ export class BinderRepository {
 
    * @param {URL} serverUrl URL to the running jupyter server
    * @param {string} token Secret token used to authenticate to the jupyter server
-   * @param {string} path The path of the file or url suffix to launch the user into
-   * @param {string} pathType One of "lab", "file" or "url", denoting what kinda path we are launching the user into
+   * @param {string} [path] The path of the file or url suffix to launch the user into
+   * @param {string} [pathType] One of "lab", "file" or "url", denoting what kinda path we are launching the user into
    *
    * @returns {URL} A URL to redirect the user to
    */
@@ -118,34 +118,96 @@ export class BinderRepository {
     // Make a copy of the URL so we don't mangle the original
     let url = new URL(serverUrl);
     if (path) {
-      // strip trailing / from URL
-      url.pathname = url.pathname.replace(/\/$/, "");
-
+      // Ensure there is a trailing / in serverUrl
+      if (!url.pathname.endsWith("/")) {
+        url.pathname += "/";
+      }
       // trim leading '/' from path to launch users into
       path = path.replace(/(^\/)/g, "");
 
       if (pathType === "lab") {
         // The path is a specific *file* we should open with JupyterLab
-
         // trim trailing / on file paths
         path = path.replace(/(\/$)/g, "");
 
         // /doc/tree is safe because it allows redirect to files
-        url.pathname = url.pathname + "/doc/tree/" + encodeURI(path);
+        url = new URL("doc/tree/" + encodeURI(path), url);
       } else if (pathType === "file") {
         // The path is a specific file we should open with *classic notebook*
 
         // trim trailing / on file paths
         path = path.replace(/(\/$)/g, "");
-        // /tree is safe because it allows redirect to files
-        url.pathname = url.pathname + "/tree/" + encodeURI(path);
+
+        url = new URL("tree/" + encodeURI(path), url);
       } else {
         // pathType is 'url' and we should just pass it on
-        url.pathname = url.pathname + "/" + path;
+        url = new URL(path, url);
       }
     }
 
     url.searchParams.append("token", token);
     return url;
+  }
+}
+
+/**
+ * Generate a shareable binder URL for given repository
+ *
+ * @param {URL} publicBaseUrl Base URL to use for making public URLs. Must end with a trailing slash.
+ * @param {string} providerPrefix prefix denoting what provider was selected
+ * @param {string} repository repo to build
+ * @param {string} ref optional ref in this repo to build
+ * @param {string} [path] Path to launch after this repo has been built
+ * @param {string} [pathType] Type of thing to open path with (raw url, notebook file, lab, etc)
+ *
+ * @returns {URL} A URL that can be shared with others, and clicking which will launch the repo
+ */
+export function makeShareableBinderURL(
+  publicBaseUrl,
+  providerPrefix,
+  repository,
+  ref,
+  path,
+  pathType,
+) {
+  if (!publicBaseUrl.pathname.endsWith("/")) {
+    throw new Error(
+      `publicBaseUrl must end with a trailing slash, got ${publicBaseUrl}`,
+    );
+  }
+  const url = new URL(
+    `v2/${providerPrefix}/${repository}/${ref}`,
+    publicBaseUrl,
+  );
+  if (path && path.length > 0) {
+    url.searchParams.append(`${pathType}path`, path);
+  }
+  return url;
+}
+
+/**
+ * Generate markup that people can put on their README or documentation to link to a specific binder
+ *
+ * @param {URL} publicBaseUrl Base URL to use for making public URLs
+ * @param {URL} url Link target URL that represents this binder installation
+ * @param {string} syntax Kind of markup to generate. Supports 'markdown' and 'rst'
+ * @returns {string}
+ */
+export function makeBadgeMarkup(publicBaseUrl, url, syntax) {
+  if (!publicBaseUrl.pathname.endsWith("/")) {
+    throw new Error(
+      `publicBaseUrl must end with a trailing slash, got ${publicBaseUrl}`,
+    );
+  }
+  const badgeImageUrl = new URL("badge_logo.svg", publicBaseUrl);
+
+  if (syntax === "markdown") {
+    return `[![Binder](${badgeImageUrl})](${url})`;
+  } else if (syntax === "rst") {
+    return `.. image:: ${badgeImageUrl}\n :target: ${url}`;
+  } else {
+    throw new Error(
+      `Only markdown or rst badges are supported, got ${syntax} instead`,
+    );
   }
 }
