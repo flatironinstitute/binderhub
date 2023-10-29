@@ -113,7 +113,7 @@ spec:
           {{- end }}
         resources:
           {{- .Values.resources | toYaml | nindent 10 }}
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
         env:
         - name: BUILD_NAMESPACE
           valueFrom:
