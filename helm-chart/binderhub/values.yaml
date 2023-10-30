@@ -317,14 +317,15 @@ jupyterhub:
 
         class Monitor(Configurable):
             allowed_monitor_ips = Set(config=True)
+            mets = []
             
             async def load(self):
                 try:
                     pods = KubeSpawner.reflectors[('pods','binder')].pods
                 except KeyError:
-                    return []
+                    return
                 except AttributeError:
-                    return []
+                    return
                 async with api_client.ApiClient() as apic:
                     try:
                         client = await DynamicClient(apic)
