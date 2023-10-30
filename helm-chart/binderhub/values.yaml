@@ -367,6 +367,8 @@ jupyterhub:
                         except ApiException as e:
                             continue
                         ts = res.timestamp
+                        if ts is None:
+                            continue
                         if ts.endswith('Z'):
                             ts = ts[:-1]+'+00:00'
                         ts = datetime.datetime.fromisoformat(ts).timestamp()
