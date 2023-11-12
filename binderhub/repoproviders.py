@@ -29,8 +29,6 @@ from traitlets.config import LoggingConfigurable
 
 from kubernetes import client
 
-from jupyterhub.traitlets import ByteSpecification
-
 from .utils import Cache
 
 GITHUB_RATE_LIMIT = Gauge(
@@ -1290,25 +1288,6 @@ class CuratedRepoProvider(RepoProvider):
             path = '/home/jovyan/' + path
         return path
 
-    def check_limit(self, opts, lim, typ, maximum):
-        try:
-            val = opts[lim+'_'+typ]
-        except KeyError:
-            return
-        if lim == 'mem':
-            val = ByteSpecification.validate(ByteSpecification, None, val)
-        if not (0 < val <= maximum):
-            raise ValueError('Invalid %s limit'%(lim))
-        return val
-
-    def check_limits(self, opts, lim):
-        maximum = { # TODO: make configurable
-            'cpu': 16,
-            'mem': 274877906944 # '256G'
-        }
-        l = self.check_limit(opts, lim, 'limit', maximum[lim])
-        self.check_limit(opts, lim, 'guarantee', l or maximum[lim])
-
     def get_launch_options(self):
         options = {'volumes': [], 'volume_mounts': [],
                 'extra_labels': {'specuser': self.specuser}
@@ -1323,9 +1302,6 @@ class CuratedRepoProvider(RepoProvider):
                 options[k] = self.params[k]
             except KeyError:
                 pass
-        # Do some sanity checks:
-        for lim in ['cpu', 'mem']:
-            self.check_limits(options, lim)
         return options
 
     def check_hub_user(self, user):
