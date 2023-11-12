@@ -40,6 +40,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-node@v4
+        # node required to build wheel
+        with:
+          node-version: "16"
+
       - name: Install chartpress
         run: pip install chartpress
 

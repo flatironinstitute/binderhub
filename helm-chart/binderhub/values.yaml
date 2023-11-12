@@ -54,6 +54,8 @@ extraConfig: {}
 
 extraFiles: {}
 
+extraPodSpec: {}
+
 # Two bits of config need to be set to fully enable cors.
 # config.BinderHub.cors_allow_origin controls the allowed origins for the
 # binderhub api, and jupyterhub.hub.config.BinderSpawner.cors_allow_origin
@@ -466,7 +468,7 @@ dind:
   daemonset:
     image:
       name: docker.io/library/docker
-      tag: "24.0.6-dind" # ref: https://hub.docker.com/_/docker/tags
+      tag: "24.0.7-dind" # ref: https://hub.docker.com/_/docker/tags
       pullPolicy: ""
       pullSecrets: []
     # Additional command line arguments to pass to dockerd
