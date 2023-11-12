@@ -338,13 +338,14 @@ jupyterhub:
                     l = ['user','specuser','specproj']
                     run = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_servers', 'Running binderhub jupyter servers', labels=l)
                     mets = [run]
-                    resources = {'cpu':{},'memory':{}}
+                    resources = {'cpu':{},'memory':{},'nvidia.com/gpu':{}}
                     for r,m in resources.items():
+                        sr = r.rsplit('/', 1)[-1]
                         for t in ('request','limit'):
-                            m[t] = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_'+r+'_'+t, 'Running binderhub jupyter servers '+r+' '+t, labels=l)
+                            m[t] = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_'+sr+'_'+t, 'Running binderhub jupyter servers '+r+' '+t, labels=l)
                             mets.append(m[t])
                         if api:
-                            m['usage'] = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_'+r, 'Running binderhub jupyter servers '+r+' usage', labels=l)
+                            m['usage'] = prometheus_client.metrics_core.GaugeMetricFamily('binder_running_server_'+sr, 'Running binderhub jupyter servers '+r+' usage', labels=l)
                             mets.append(m['usage'])
 
                     for pod in pods.values():
@@ -375,7 +376,10 @@ jupyterhub:
                             ts = ts[:-1]+'+00:00'
                         ts = datetime.datetime.fromisoformat(ts).timestamp()
                         for r,m in resources.items():
-                            m['usage'].add_metric(l, sum(parse_quantity(getattr(c.usage,r)) for c in res.containers), timestamp=ts)
+                            v = (getattr(c.usage,r,None) for c in res.containers)
+                            v = [parse_quantity(x) for x in v if x is not None]
+                            if v:
+                                m['usage'].add_metric(l, sum(v), timestamp=ts)
 
                     self.mets = mets
 
