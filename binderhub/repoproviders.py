@@ -1307,9 +1307,9 @@ class CuratedRepoProvider(RepoProvider):
     def check_hub_user(self, user):
         if user['admin']:
             return True
-        users = self.params.get('users')
+        users = self.params.get('users', [])
         if type(users) is str:
             users = users.split()
-        if users and not user['name'] in users:
+        if user['name'] not in users:
             return False
         return super().check_hub_user(user)
