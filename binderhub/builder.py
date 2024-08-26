@@ -247,6 +247,10 @@ class BuildHandler(BaseHandler):
 
         return build_only
 
+    def redirect(self, *args, **kwargs):
+        # disable redirect to login, which won't work for EventSource
+        raise HTTPError(403)
+
     @authenticated
     async def get(self, provider_prefix, _unescaped_spec):
         """Get a built image for a given spec and repo provider.
@@ -296,7 +300,7 @@ class BuildHandler(BaseHandler):
             await self.emit(
                 {
                     "phase": "failed",
-                    "message": f"Sorry, {spec} has been temporarily disabled from launching. Please contact admins for more info!",
+                    "message": f"Sorry, {spec} is not allowed to launch. Please contact admins for more info!",
                 }
             )
             return
@@ -469,9 +473,11 @@ class BuildHandler(BaseHandler):
                         "ref": ref,
                         "status": "success",
                         "build_token": self._have_build_token,
-                        "origin": self.settings["normalized_origin"]
-                        if self.settings["normalized_origin"]
-                        else self.request.host,
+                        "origin": (
+                            self.settings["normalized_origin"]
+                            if self.settings["normalized_origin"]
+                            else self.request.host
+                        ),
                     },
                 )
             return
@@ -616,9 +622,11 @@ class BuildHandler(BaseHandler):
                     "ref": ref,
                     "status": "success",
                     "build_token": self._have_build_token,
-                    "origin": self.settings["normalized_origin"]
-                    if self.settings["normalized_origin"]
-                    else self.request.host,
+                    "origin": (
+                        self.settings["normalized_origin"]
+                        if self.settings["normalized_origin"]
+                        else self.request.host
+                    ),
                 },
             )
 

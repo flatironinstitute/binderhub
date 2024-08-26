@@ -26,14 +26,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jupyterhub/action-k3s-helm@v3
+      - uses: jupyterhub/action-k3s-helm@v4
         with:
           k3s-channel: stable
           metrics-enabled: false
           traefik-enabled: false
           docker-enabled: true
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 

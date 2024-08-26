@@ -85,8 +85,12 @@ jupyterhub:
           - binder
         scopes:
           - servers
-          # we don't need admin:users if auth is not enabled!
-          - "admin:users"
+          # admin:users is required in order to create a jupyterhub user for an
+          # anonymous binderhub web-server visitor in non-authenticated
+          # deployments, and read:users is required for authenticated
+          # deployments to check the state of a jupyterhub user's running
+          # servers before trying to launch.
+          - admin:users
     extraConfig:
       0-binderspawnermixin: |
         """
@@ -106,6 +110,7 @@ jupyterhub:
         - Override the Z2JH hub with a custom image built in this repository
         - Duplicate the code here and in binderhub/binderspawner_mixin.py
         """
+
         from tornado import web
         from traitlets import Bool, Unicode
         from traitlets.config import Configurable
@@ -472,7 +477,7 @@ dind:
   daemonset:
     image:
       name: docker.io/library/docker
-      tag: "24.0.7-dind" # ref: https://hub.docker.com/_/docker/tags
+      tag: "27.1.1-dind" # ref: https://hub.docker.com/_/docker/tags
       pullPolicy: ""
       pullSecrets: []
     # Additional command line arguments to pass to dockerd
@@ -484,6 +489,7 @@ dind:
   resources: {}
   hostSocketDir: /var/run/dind
   hostLibDir: /var/lib/dind
+  hostSocketName: docker.sock
 
 # Podman in Kubernetes
 pink:
@@ -491,7 +497,7 @@ pink:
   daemonset:
     image:
       name: quay.io/podman/stable
-      tag: "v4.7.0" # ref: https://quay.io/repository/podman/stable
+      tag: "v5.1.2" # ref: https://quay.io/repository/podman/stable
       pullPolicy: ""
       pullSecrets: []
     lifecycle: {}
@@ -500,6 +506,7 @@ pink:
   resources: {}
   hostStorageDir: /var/lib/pink/storage
   hostSocketDir: /var/run/pink
+  hostSocketName: podman.sock
 
 imageCleaner:
   enabled: true

@@ -1,6 +1,7 @@
 """
 Main handler classes for requests
 """
+
 import time
 import urllib.parse
 
@@ -21,6 +22,7 @@ SPEC_NAMES = {
     "figshare": "Figshare",
     "hydroshare": "Hydroshare",
     "dataverse": "Dataverse",
+    "ckan": "CKAN",
     "user": "Local user environment"
 }
 

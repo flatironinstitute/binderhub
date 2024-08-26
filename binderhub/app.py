@@ -1,6 +1,7 @@
 """
 The binderhub application
 """
+
 import asyncio
 import ipaddress
 import json
@@ -57,6 +58,7 @@ from .quota import KubernetesLaunchQuota, LaunchQuota
 from .ratelimit import RateLimiter
 from .registry import DockerRegistry
 from .repoproviders import (
+    CKANProvider,
     DataverseProvider,
     FigshareProvider,
     GistRepoProvider,
@@ -558,7 +560,7 @@ class BinderHub(Application):
         return os.environ.get("BUILD_NAMESPACE", "default")
 
     build_image = Unicode(
-        "quay.io/jupyterhub/repo2docker:2023.06.0",
+        "quay.io/jupyterhub/repo2docker:2024.07.0",
         help="""
         DEPRECATED: Use c.KubernetesBuildExecutor.build_image
 
@@ -587,6 +589,7 @@ class BinderHub(Application):
             "figshare": FigshareProvider,
             "hydroshare": HydroshareProvider,
             "dataverse": DataverseProvider,
+            "ckan": CKANProvider,
         },
         config=True,
         help="""
@@ -872,9 +875,9 @@ class BinderHub(Application):
                 kubernetes.config.load_incluster_config()
             except kubernetes.config.ConfigException:
                 kubernetes.config.load_kube_config()
-            self.tornado_settings[
-                "kubernetes_client"
-            ] = self.kube_client = kubernetes.client.CoreV1Api()
+            self.tornado_settings["kubernetes_client"] = self.kube_client = (
+                kubernetes.client.CoreV1Api()
+            )
 
         # times 2 for log + build threads
         self.build_pool = ThreadPoolExecutor(self.concurrent_build_limit * 2)
@@ -970,8 +973,7 @@ class BinderHub(Application):
                 "enable_api_only_mode": self.enable_api_only_mode,
             }
         )
-        if self.auth_enabled:
-            self.tornado_settings["cookie_secret"] = os.urandom(32)
+        self.tornado_settings["cookie_secret"] = os.urandom(32)
         if self.cors_allow_origin:
             self.tornado_settings.setdefault("headers", {})[
                 "Access-Control-Allow-Origin"

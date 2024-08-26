@@ -12,7 +12,7 @@ dependencies:
   #            and run "./dependencies freeze --upgrade".
   #
   - name: jupyterhub
-    version: "3.1.0"
+    version: "3.3.7"
     repository: "https://jupyterhub.github.io/helm-chart"
 description: |-
   BinderHub is like a JupyterHub that automatically builds environments for the
@@ -28,5 +28,7 @@ maintainers:
   # listed, we have added some below, but in practice the entire JupyterHub team
   # contributes to the maintenance of this Helm chart. Please go ahead and add
   # yourself!
+  - name: Yuvi
+    email: yuvipanda@gmail.com
   - name: Erik Sundell
     email: erik@sundellopensource.se

@@ -39,7 +39,8 @@ jobs:
         with:
           # chartpress requires the full history
           fetch-depth: 0
-      - uses: actions/setup-python@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -54,7 +55,12 @@ jobs:
       - name: Set up Docker Buildx (for chartpress multi-arch builds)
         uses: docker/setup-buildx-action@v3
 
-      - name: Install chart publishing dependencies (chartpress, helm)
+      - name: Setup helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.5.4"
+
+      - name: Install chart publishing dependencies (chartpress, etc)
         run: |
           . ./ci/common
           setup_helm v3.5.4
@@ -85,6 +91,7 @@ jobs:
         # 3. Putting the robot account's username and password in GitHub actions environment
         run: |
           docker login -u "${{ secrets.QUAY_USERNAME }}" -p "${{ secrets.QUAY_PASSWORD }}" quay.io
+          docker login -u "${{ secrets.DOCKER_USERNAME }}" -p "${{ secrets.DOCKER_PASSWORD }}" docker.io
 
       - name: Configure a git user
         # Having a user.email and user.name configured with git is required to
@@ -109,7 +116,7 @@ jobs:
         with:
           # Versioneer requires past tags
           fetch-depth: 0
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install pypa/build
@@ -117,7 +124,7 @@ jobs:
       - name: Build a sdist, and a binary wheel from the sdist
         run: python -mbuild .
       # ref: https://github.com/actions/upload-artifact#readme
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: pypi-dist
           path: "dist/*"
