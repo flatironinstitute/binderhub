@@ -76,7 +76,7 @@ jupyterhub:
   hub:
     config:
       JupyterHub:
-        authenticator_class: nullauthenticator.NullAuthenticator
+        authenticator_class: "null"
       BinderSpawner:
         auth_enabled: false
     loadRoles:
@@ -477,7 +477,7 @@ dind:
   daemonset:
     image:
       name: docker.io/library/docker
-      tag: "27.1.1-dind" # ref: https://hub.docker.com/_/docker/tags
+      tag: "27.5.1-dind" # ref: https://hub.docker.com/_/docker/tags
       pullPolicy: ""
       pullSecrets: []
     # Additional command line arguments to pass to dockerd
@@ -497,7 +497,7 @@ pink:
   daemonset:
     image:
       name: quay.io/podman/stable
-      tag: "v5.1.2" # ref: https://quay.io/repository/podman/stable
+      tag: "v5.5.2" # ref: https://quay.io/repository/podman/stable
       pullPolicy: ""
       pullSecrets: []
     lifecycle: {}
@@ -510,11 +510,14 @@ pink:
 
 imageCleaner:
   enabled: true
+  extraEnv: {}
   image:
     name: quay.io/jupyterhub/docker-image-cleaner
     tag: "1.0.0-beta.3"
     pullPolicy: ""
     pullSecrets: []
+  # whether to cordon nodes while cleaning
+  cordon: true
   # delete an image at most every 5 seconds
   delay: 5
   # Interpret threshold values as percentage or bytes
@@ -537,16 +540,14 @@ ingress:
     type: kube-lego
   hosts: []
   ingressClassName:
-  annotations:
-    {}
+  annotations: {}
     # kubernetes.io/ingress.class: nginx
     # kubernetes.io/tls-acme: "true"
   pathSuffix:
     # Suffix added to Ingress's routing path pattern.
     # Specify `*` if your ingress matches path by glob pattern.
   pathType: Prefix
-  tls:
-    []
+  tls: []
     # Secrets must be manually created in the namespace.
     # - secretName: chart-example-tls
     #   hosts:

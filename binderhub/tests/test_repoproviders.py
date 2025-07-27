@@ -182,13 +182,6 @@ async def test_hydroshare_doi():
             "https://doi.org/10.7910/DVN/TJCLKP",
             "dataverse-dvn-2ftjclkp",
         ],
-        [
-            "10.25346/S6/DE95RT",
-            "10.25346/S6/DE95RT",
-            r"20460\.v\d+\.\d+$",
-            "https://doi.org/10.25346/S6/DE95RT",
-            "dataverse-s6-2fde95rt",
-        ],
     ],
 )
 async def test_dataverse(
@@ -221,18 +214,18 @@ async def test_dataverse(
             "ckan-sample-dataset-1",
         ],
         [
-            "https://demo.datashades.com/dataset/chart-test?activity_id=061888e9-e3c2-4769-b097-9c195a841e2f",
-            "https://demo.datashades.com/dataset/chart-test?activity_id=061888e9-e3c2-4769-b097-9c195a841e2f",
-            "chart-test.v1717501747",
-            "https://demo.datashades.com/dataset/chart-test?activity_id=061888e9-e3c2-4769-b097-9c195a841e2f",
-            "ckan-chart-test",
+            "https://data.depositar.io/dataset/binder-example-sea-turtle-sightings-in-taiwan/?activity_id=93df7fd0-0edc-4ebf-bac7-fbf5f78de90b",
+            "https://data.depositar.io/dataset/binder-example-sea-turtle-sightings-in-taiwan/?activity_id=93df7fd0-0edc-4ebf-bac7-fbf5f78de90b",
+            "binder-example-sea-turtle-sightings-in-taiwan.v1712023831",
+            "https://data.depositar.io/dataset/binder-example-sea-turtle-sightings-in-taiwan/?activity_id=93df7fd0-0edc-4ebf-bac7-fbf5f78de90b",
+            "ckan-binder-example-sea-turtle-sightings-in-taiwan",
         ],
         [
-            "https://demo.datashades.com/dataset/chart-test/history/061888e9-e3c2-4769-b097-9c195a841e2f",
-            "https://demo.datashades.com/dataset/chart-test/history/061888e9-e3c2-4769-b097-9c195a841e2f",
-            "chart-test.v1717501747",
-            "https://demo.datashades.com/dataset/chart-test/history/061888e9-e3c2-4769-b097-9c195a841e2f",
-            "ckan-chart-test",
+            "https://data.depositar.io/dataset/binder-example-sea-turtle-sightings-in-taiwan/history/93df7fd0-0edc-4ebf-bac7-fbf5f78de90b",
+            "https://data.depositar.io/dataset/binder-example-sea-turtle-sightings-in-taiwan/history/93df7fd0-0edc-4ebf-bac7-fbf5f78de90b",
+            "binder-example-sea-turtle-sightings-in-taiwan.v1712023831",
+            "https://data.depositar.io/dataset/binder-example-sea-turtle-sightings-in-taiwan/history/93df7fd0-0edc-4ebf-bac7-fbf5f78de90b",
+            "ckan-binder-example-sea-turtle-sightings-in-taiwan",
         ],
         ["https://demo.ckan.org/group/roger", None, None, None, None],
         ["https://demo.ckan.org/dataset/nosuchdataset", None, None, None, None],
@@ -610,3 +603,83 @@ def test_gist_secret():
 
     provider = GistRepoProvider(spec=spec, allow_secret_gist=True)
     assert IOLoop().run_sync(provider.get_resolved_ref) is not None
+
+
+def _js_regex(pat):
+    """compile a javascript regular expression
+
+    converts js '?<name>' to Python '?P<name>' syntax
+    """
+    return re.compile(pat.replace("?<", "?P<"))
+
+
+@pytest.mark.parametrize(
+    "provider, repo, expected_spec",
+    [
+        (
+            GitHubRepoProvider,
+            "https://github.com/org/repo",
+            "org/repo",
+        ),
+        (
+            GitHubRepoProvider,
+            "http://github.com/org/repo/",
+            "org/repo",
+        ),
+        (
+            GitHubRepoProvider,
+            "http://github.com/org/",
+            "org",
+        ),
+        (
+            GitHubRepoProvider,
+            "org/repo",
+            "org/repo",
+        ),
+        (
+            GitHubRepoProvider,
+            "org/repo/",
+            "org/repo",
+        ),
+        (
+            GitLabRepoProvider,
+            "https://gitlab.com/org/repo",
+            "org/repo",
+        ),
+        (
+            GitLabRepoProvider,
+            "https://gitlab.com/org/repo/",
+            "org/repo",
+        ),
+        (
+            GitLabRepoProvider,
+            "org/repo/",
+            "org/repo",
+        ),
+        (
+            GitLabRepoProvider,
+            "org/repo",
+            "org/repo",
+        ),
+        (
+            GistRepoProvider,
+            "user/12345",
+            "user/12345",
+        ),
+        (
+            GistRepoProvider,
+            "user/12345/",
+            "user/12345",
+        ),
+    ],
+)
+def test_detect_regex(provider, repo, expected_spec):
+    config = provider.display_config
+    detect_regex = _js_regex(config["detect"]["regex"])
+
+    match = detect_regex.match(repo)
+    if expected_spec is None and match is None:
+        # ok, no match expected
+        return
+    repo = match.group("repo")
+    assert repo == expected_spec

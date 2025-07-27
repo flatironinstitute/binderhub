@@ -60,6 +60,11 @@ need to insert. Note that the first line is not indented at all::
         "client_x509_cert_url": "<REPLACE>"
       }
 
+If you are using Google Artifact Registry
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You do not need to do anything.
+
 If you are using Docker Hub
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -110,8 +115,51 @@ where:
 Create ``config.yaml``
 ----------------------
 
-Create a file called ``config.yaml`` and choose the following directions based
-on the registry you are using.
+Create a file called ``config.yaml``.
+
+Exposing JupyterHub and BinderHub
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+By default, JupyterHub and BinderHub is exposed as a ``LoadBalancer``.
+If you want to expose JupyterHub and BinderHub using an ingress controller,
+you need to add::
+
+    service:
+      type: ClusterIP
+
+    ingress:
+      enabled: true
+      annotations:
+        # replace with your ingress class
+        kubernetes.io/ingress.class: "nginx"
+      https:
+          # This is unsafe! Only se for local development
+          enabled: false
+      hosts:
+        # replace with your domain for BinderHub
+        - binderhub.XXX.XXX.XXX.XXX.nip.io
+
+    jupyterhub:
+      proxy:
+        service:
+          type: ClusterIP
+      ingress:
+        enabled: true
+        annotations:
+          # replace with your ingress class
+          kubernetes.io/ingress.class: "nginx"
+        hosts:
+          # replace with your domain for JupyterHub
+          - jupyterhub.XXX.XXX.XXX.XXX.nip.io
+
+The above snippet assumes that you are using `Ingress NGINX Controller <https://kubernetes.github.io/ingress-nginx/>`_
+and uses `nip.io <https://nip.io/>`_ to provide you with a temporary domain
+to the IP ``XXX.XXX.XXX.XXX``.
+
+Expand ``config.yaml``
+----------------------
+
+Choose the following directions based on the registry you are using.
 
 If you are using ``gcr.io``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -134,6 +182,34 @@ your ``config.yaml`` file::
      recommend something descriptive such as ``binder-dev-`` or ``binder-prod-``
      (ending with a `-` is useful).
    * Note that in both cases, you should remove the ``<`` and ``>`` symbols,
+     they are simply placeholders in the code above.
+
+If you are using Google Artifact Registry
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To configure BinderHub to use Google Artifact Registry, add the following to your `config.yaml` file::
+
+  config:
+    BinderHub:
+      use_registry: true
+      image_prefix: <region>-docker.pkg.dev/<google-project-id>/<prefix>-
+      registry_class: "binderhub.registry.GoogleArtifactRegistry"
+      DockerRegistry:
+        url: "https://<region>-docker.pkg.dev"
+        token_url: "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/<service-account-name>/token"
+
+.. note::
+
+   * ``<region>`` This is the region of the Artifact Registry repository, such
+     as ``us-central1``.
+   * ``<google-project-id>`` This is the project *ID*, which may be different
+     from the project *name*.
+   * ``<prefix>`` can be any string, and will be prepended to image names. We
+     recommend something descriptive such as ``binder-dev-`` or ``binder-prod-``
+     (ending with a `-` is useful).
+   * ``<service-account-name>`` This is the name of the service account the 
+     node pool is configured to use.
+   * Note that in all cases, you should remove the ``<`` and ``>`` symbols,
      they are simply placeholders in the code above.
 
 If you are using Docker Hub
@@ -284,10 +360,18 @@ First, get the latest helm chart for BinderHub.::
 Next, **install the Helm Chart** using the configuration files
 that you've just created. Do this by running the following command::
 
-    helm install <choose-name> jupyterhub/binderhub --version=0.2.0-3b53fce --namespace=<choose-namespace> -f secret.yaml -f config.yaml
+    helm upgrade \
+    <choose-name> \
+    jupyterhub/binderhub \
+    --install \
+    --version=1.0.0-0.dev.git.3673.h040c9bbe \
+    --create-namespace \
+    --namespace=<choose-namespace> \
+    -f secret.yaml \
+    -f config.yaml
 
-This command will install the Helm chart released on March 3rd, 2019 as
-identified by the commit hash (the random string after `0.2.0-`), which is
+This command will install the Helm chart released on 23 January 2025 as
+identified by the commit hash (the random string after `1.0.0-`), which is
 provided as a working example. You should provide the commit hash for the most
 recent release, which can be found
 `here <https://jupyterhub.github.io/helm-chart/#development-releases-binderhub>`__.
@@ -313,8 +397,11 @@ few minutes to be set up.
 Connect BinderHub and JupyterHub
 --------------------------------
 
-In the google console, run the following command to print the IP address
-of the JupyterHub we just deployed.::
+When using ``LoadBalancer``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run the following command to print the IP address
+of the JupyterHub we just deployed. ::
 
   kubectl --namespace=<namespace-from-above> get svc proxy-public
 
@@ -325,14 +412,34 @@ JupyterHub. Now, add the following lines to ``config.yaml`` file::
     BinderHub:
       hub_url: http://<IP in EXTERNAL-IP>
 
+When using ``Ingress``
+~~~~~~~~~~~~~~~~~~~~~~
+
+If JupyterHub is exposed using an ``Ingress``,
+copy the domains that JupyterHub is answering
+(for example, ``http://jupyterhub.XXX.XXX.XXX.XXX.nip.io``)
+and add to ``config.yaml``::
+
+    config:
+      BinderHub:
+        hub_url: http://jupyterhub.XXX.XXX.XXX.XXX.nip.io
+
+In the above snippet,
+`nip.io <https://nip.io/>`_ provides you
+with a temporary domain to the IP ``XXX.XXX.XXX.XXX``.
+
+Updating the deployment
+~~~~~~~~~~~~~~~~~~~~~~~
+
 Next, upgrade the helm chart to deploy this change::
 
-  helm upgrade <name-from-above> jupyterhub/binderhub --version=0.2.0-3b53fce  -f secret.yaml -f config.yaml
-
-For the first deployment of your BinderHub, the commit hash parsed to the
-`--version` argument should be the same as in step 3.4. However, when it comes
-to updating your BinderHub, you can parse the commit hash of a newer chart
-version.
+  helm upgrade \
+  <name-from-above> \
+  jupyterhub/binderhub \
+  --install \
+  --version=1.0.0-0.dev.git.3673.h040c9bbe \
+  -f secret.yaml \
+  -f config.yaml
 
 Try out your BinderHub Deployment
 ---------------------------------

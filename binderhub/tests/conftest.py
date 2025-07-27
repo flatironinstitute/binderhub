@@ -3,9 +3,9 @@
 import inspect
 import json
 import os
+import secrets
 import subprocess
 import time
-from binascii import b2a_hex
 from collections import defaultdict
 from unittest import mock
 from urllib.parse import urlparse
@@ -42,8 +42,12 @@ REMOTE_BINDER = bool(BINDER_URL)
 
 
 def pytest_configure(config):
-    """This function has meaning to pytest, for more information, see:
-    https://docs.pytest.org/en/stable/reference.html#pytest.hookspec.pytest_configure
+    """
+    Configure plugins and custom markers
+
+    This function is called by pytest after command line arguments have
+    been parsed. See https://docs.pytest.org/en/stable/reference/reference.html#pytest.hookspec.pytest_configure
+    for more information.
     """
     # register our custom markers
     config.addinivalue_line(
@@ -375,7 +379,7 @@ def always_build(app, request):
     if REMOTE_BINDER:
         return
     # make it long to ensure we run into max build slug length
-    session_id = b2a_hex(os.urandom(16)).decode("ascii")
+    session_id = secrets.token_hex(16)
 
     def patch_provider(Provider):
         original_slug = Provider.get_build_slug

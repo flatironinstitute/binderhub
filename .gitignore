@@ -81,6 +81,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+coverage
 
 # Translations
 *.mo
@@ -158,3 +159,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+# pixi environments
+.pixi

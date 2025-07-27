@@ -2,9 +2,9 @@
 Emit structured, discrete events when various actions happen.
 """
 
+import datetime
 import json
 import logging
-from datetime import datetime
 
 import jsonschema
 from jupyterhub.traitlets import Callable
@@ -12,14 +12,17 @@ from pythonjsonlogger import jsonlogger
 from traitlets.config import Configurable
 
 
-def _skip_message(record, **kwargs):
+def _skip_fields(record, **kwargs):
     """
-    Remove 'message' from log record.
+    Remove unwanted fields from log record.
 
-    It is always emitted with 'null', and we do not want it,
-    since we are always emitting events only
+    message: always emitted with 'null', and we do not want it,
+      since we are always emitting events only
+    taskName:
     """
     del record["message"]
+    if "taskName" in record:
+        del record["taskName"]
     return json.dumps(record, **kwargs)
 
 
@@ -49,7 +52,7 @@ class EventLog(Configurable):
 
         if self.handlers_maker:
             self.handlers = self.handlers_maker(self)
-            formatter = jsonlogger.JsonFormatter(json_serializer=_skip_message)
+            formatter = jsonlogger.JsonFormatter(json_serializer=_skip_fields)
             for handler in self.handlers:
                 handler.setFormatter(formatter)
                 self.log.addHandler(handler)
@@ -95,8 +98,9 @@ class EventLog(Configurable):
         schema = self.schemas[(schema_name, version)]
         jsonschema.validate(event, schema)
 
+        now_utc = datetime.datetime.now(tz=datetime.timezone.utc)
         capsule = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "schema": schema_name,
             "version": version,
         }

@@ -33,7 +33,7 @@ spec:
         key: hub.jupyter.org_dedicated
         operator: Equal
         value: user
-      {{- with .Values.imageCleaner.extraTolerations }}
+      {{- with .Values.tolerations }}
       {{- . | toYaml | nindent 6 }}
       {{- end }}
       nodeSelector: {{ .Values.config.BinderHub.build_node_selector | toJson }}
@@ -52,10 +52,12 @@ spec:
         - name: socket-{{ $builderName }}
           mountPath: /var/run/docker.sock
         env:
+        {{- if .Values.imageCleaner.cordon }}
         - name: DOCKER_IMAGE_CLEANER_NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+        {{- end }}
         - name: DOCKER_IMAGE_CLEANER_PATH_TO_CHECK
           value: /var/lib/{{ $builderName }}
         - name: DOCKER_IMAGE_CLEANER_DELAY_SECONDS
@@ -66,6 +68,9 @@ spec:
           value: {{ .Values.imageCleaner.imageGCThresholdHigh | quote }}
         - name: DOCKER_IMAGE_CLEANER_THRESHOLD_LOW
           value: {{ .Values.imageCleaner.imageGCThresholdLow | quote }}
+        {{- with .Values.imageCleaner.extraEnv }}
+        {{- include "jupyterhub.extraEnv" . | nindent 8 }}
+        {{- end }}
       terminationGracePeriodSeconds: 0
       volumes:
       {{- if eq $builderName "host" }}

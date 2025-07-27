@@ -2,7 +2,6 @@
 
 import json
 import urllib.parse
-from http.client import responses
 
 import jwt
 from jupyterhub.services.auth import HubOAuth, HubOAuthenticated
@@ -38,12 +37,12 @@ class BaseHandler(HubOAuthenticated, web.RequestHandler):
         match = ip_in_networks(
             request_ip,
             ban_networks,
-            min_prefix_len=self.settings["ban_networks_min_prefix_len"],
         )
         if match:
-            network, message = match
+            network_spec = match
+            message = ban_networks[network_spec]
             app_log.warning(
-                f"Blocking request from {request_ip} matching banned network {network}: {message}"
+                f"Blocking request from {request_ip} matching banned network {network_spec}: {message}"
             )
             raise web.HTTPError(403, f"Requests from {message} are not allowed")
 
@@ -204,45 +203,8 @@ class BaseHandler(HubOAuthenticated, web.RequestHandler):
         except Exception:
             return ""
 
-    def write_error(self, status_code, **kwargs):
-        exc_info = kwargs.get("exc_info")
-        message = ""
-        status_message = responses.get(status_code, "Unknown HTTP Error")
-        if exc_info:
-            message = self.extract_message(exc_info)
-
-        self.render_template(
-            "error.html",
-            status_code=status_code,
-            status_message=status_message,
-            message=message,
-        )
-
     def options(self, *args, **kwargs):
         pass
-
-
-class Custom404(BaseHandler):
-    """Raise a 404 error, rendering the error.html template"""
-
-    def prepare(self):
-        raise web.HTTPError(404)
-
-
-class AboutHandler(BaseHandler):
-    """Serve the about page"""
-
-    async def get(self):
-        self.render_template(
-            "about.html",
-            base_url=self.settings["base_url"],
-            submit=False,
-            binder_version=binder_version,
-            message=self.settings["about_message"],
-            google_analytics_code=self.settings["google_analytics_code"],
-            google_analytics_domain=self.settings["google_analytics_domain"],
-            extra_footer_scripts=self.settings["extra_footer_scripts"],
-        )
 
 
 class VersionHandler(BaseHandler):
@@ -253,6 +215,13 @@ class VersionHandler(BaseHandler):
     # allow version-check requests from banned hosts
     # (e.g. mybinder.org federation when blocking cloud datacenters)
     skip_check_request_ip = True
+
+    def set_default_headers(self):
+        if "Access-Control-Allow-Origin" not in self.settings.get("headers", {}):
+            # allow CORS requests to this endpoint by default
+            self.set_header("Access-Control-Allow-Origin", "*")
+
+        super().set_default_headers()
 
     async def get(self):
         self.set_header("Content-type", "application/json")

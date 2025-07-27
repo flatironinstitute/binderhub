@@ -21,8 +21,6 @@ This document also contains information on [how to run tests](running-tests) and
 ## Develop documentation
 
 You are assumed to have a modern version of [Python](https://www.python.org/).
-The documentation uses the [reStructuredText markup
-language](http://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html).
 
 1. Clone the BinderHub repository to your local computer and `cd` into it.
 
@@ -35,23 +33,18 @@ language](http://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html
 
    ```bash
    python3 -m pip install -r docs/requirements.txt
-   ```
-
-1. The documentation is located in the `docs/` sub-directory, `cd` into it:
-
-   ```bash
-   cd ./docs
+   python3 -m pip install sphinx-autobuild
    ```
 
 1. To build the documentation run:
 
    ```bash
-   make html
+   sphinx-autobuild docs/source docs/_build/html
    ```
 
-1. Open the main documentation page in your browser, it is located at
-   `_build/html/index.html`. On a Mac you can open it directly from the
-   terminal with `open _build/html/index.html`.
+   Changes to the source code will automatically trigger a re-build of the documentation.
+
+1. Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
 
 (develop-user-interface)=
 
@@ -112,12 +105,17 @@ chart](develop-helm-chart).
 
 ## Develop Kubernetes integration
 
+```{important}
 This requires `helm` and a functional Kubernetes cluster. Please do
 [preliminary Kubernetes setup](kubernetes-setup) if you haven't already
 before continuing here.
+```
 
-With a Kubernetes cluster running, as you verify with `kubectl version`, you can
-continue.
+1. Verify that you have access to a Kubernetes cluster running.
+
+   ```bash
+   kubectl version
+   ```
 
 1. Locally install BinderHub as a Python package and its development
    requirements locally.
@@ -137,11 +135,19 @@ continue.
    ```
 
 1. Configure `docker` using environment variables to use the same Docker daemon
-   as your `minikube` cluster. This means images you build are directly
+   as your local Kubernetes cluster. This means images you build are directly
    available to the cluster.
+
+   If using `minikube`,
 
    ```bash
    eval $(minikube docker-env)
+   ```
+
+   If using Docker Desktop,
+
+   ```bash
+   docker context use desktop-linux
    ```
 
 1. Start BinderHub with the testing config file.
@@ -152,10 +158,10 @@ continue.
 
 1. Visit [http://localhost:8585](http://localhost:8585)
 
-1. Congratulations, you can now make changes and see how they influence the
-   deployment. You may be required to restart the BinderHub depending on what
-   you change. You can also start running `pytest` tests to verify the
-   Deployment functions as it should.
+Congratulations, you can now make changes and see how they influence the
+deployment. You may be required to restart the BinderHub depending on what
+you change. You can also start running `pytest` tests to verify the
+Deployment functions as it should.
 
 ### Cleanup resources
 
@@ -189,18 +195,24 @@ continue.
    ```
 
 2. Configure `docker` using environment variables to use the same Docker daemon
-   as your `minikube` cluster. This means images you build are directly
-   available to the cluster.
+   as your local Kubernetes cluster. This means images you build are directly
+   available to the cluster. If using `minikube`,
 
    ```bash
    eval $(minikube docker-env)
+   ```
+
+   If using Docker Desktop,
+
+   ```bash
+   docker context use desktop-linux
    ```
 
 3. Build the docker images referenced by the Helm chart and update its default
    values to reference these images.
 
    ```bash
-   (cd helm-chart && chartpress)
+   (python3 -m build . && cd helm-chart && chartpress)
    ```
 
 4. Get the chart dependencies (for example JupyterHub)
