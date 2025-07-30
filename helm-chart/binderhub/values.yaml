@@ -531,7 +531,6 @@ imageCleaner:
   host:
     dockerSocket: /var/run/docker.sock
     dockerLibDir: /var/lib/docker
-  extraTolerations: []
 
 ingress:
   enabled: false

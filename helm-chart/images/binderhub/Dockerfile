@@ -14,8 +14,7 @@ FROM python:3.13-bookworm as build-stage
 RUN echo "deb https://deb.nodesource.com/node_18.x bullseye main" > /etc/apt/sources.list.d/nodesource.list \
  && curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
 RUN apt-get update \
- && apt-get install --yes \
-        nodejs \
+ && apt-get install --yes npm \
  && rm -rf /var/lib/apt/lists/*
 
 # Build wheels
