@@ -106,6 +106,22 @@ chart](develop-helm-chart).
 ## Develop Kubernetes integration
 
 ```{important}
+This requires you create the JS and CSS bundles BinderHub serves to visitors.
+
+1. Install the NodeJS dependencies from `package.json`.
+
+   ~~~bash
+   npm install
+   ~~~
+
+1. Create the JS and CSS bundles.
+
+   ~~~bash
+   npm run webpack
+   ~~~
+```
+
+```{important}
 This requires `helm` and a functional Kubernetes cluster. Please do
 [preliminary Kubernetes setup](kubernetes-setup) if you haven't already
 before continuing here.
@@ -132,6 +148,20 @@ before continuing here.
    # that relies on JupyterHub's configured Authenticator to decide if the users
    # are allowed access or not.
    ./testing/local-binder-k8s-hub/install-jupyterhub-chart
+   ```
+
+1. Export the location of your JupyterHub to the environment variable `LOCAL_BINDER_JUPYTERHUB_IP`.
+
+   If using `minikube`,
+
+   ```bash
+   export LOCAL_BINDER_JUPYTERHUB_IP=$(minikube ip)
+   ```
+
+   If using Docker Desktop,
+
+   ```bash
+   export LOCAL_BINDER_JUPYTERHUB_IP='kubernetes.docker.internal'
    ```
 
 1. Configure `docker` using environment variables to use the same Docker daemon
@@ -165,13 +195,21 @@ Deployment functions as it should.
 
 ### Cleanup resources
 
-1. To cleanup the JupyterHub Helm chart you have installed in Kubernetes...
+1. Cleanup the JupyterHub Helm chart you have installed in Kubernetes.
 
    ```bash
    helm delete binderhub-test
    ```
 
-1. To stop running the Kubernetes cluster...
+1. Restore the context used by `docker`.
+
+   ```bash
+   docker context use default
+   ```
+
+1. Stop running the Kubernetes cluster.
+
+   If using `minikube`,
 
    ```bash
    minikube stop
