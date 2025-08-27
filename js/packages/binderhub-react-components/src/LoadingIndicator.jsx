@@ -26,20 +26,9 @@ const HELP_MESSAGES = [
  * @param {LoadingIndicatorProps} props
  */
 export function LoadingIndicator({ progressState }) {
-  const [currentMessage, setCurrentMessage] = useState(HELP_MESSAGES[0]);
-
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      const newMessage =
-        HELP_MESSAGES[Math.floor(Math.random() * HELP_MESSAGES.length)];
-      setCurrentMessage(newMessage);
-    }, 6 * 1000);
-
-    return () => clearInterval(intervalId);
-  }, []);
-
   return (
     <div className="text-center p-4 m-4">
+      <h4><a href="/">Flatiron Institute</a></h4>
       <div
         id="loader"
         className={progressState === PROGRESS_STATES.FAILED ? "error" : ""}
@@ -51,9 +40,6 @@ export function LoadingIndicator({ progressState }) {
       ) : (
         <>
           <h4>Launching your Binder...</h4>
-          <div>
-            <p dangerouslySetInnerHTML={{ __html: currentMessage }}></p>
-          </div>
         </>
       )}
     </div>
