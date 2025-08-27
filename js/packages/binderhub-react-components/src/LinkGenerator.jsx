@@ -181,11 +181,6 @@ export function LinkGenerator({
       <fieldset>
         <legend className="form-label">{selectedProvider.repo.label}</legend>
         <div className="input-group">
-          <ProviderSelector
-            providers={providers}
-            selectedProvider={selectedProvider}
-            setSelectedProvider={setSelectedProvider}
-          />
           <input
             className="form-control border border-2 border-start-0"
             type="text"
@@ -213,7 +208,7 @@ export function LinkGenerator({
       <div className="row align-items-end">
         <div className="col-5">
           <label htmlFor="ref" className="form-label">
-            Git ref (branch, tag, or commit)
+            Project name
           </label>
           <div className="input-group">
             <input
@@ -247,101 +242,6 @@ export function LinkGenerator({
         </div>
       </div>
 
-      <div>
-        <div className="input-group">
-          <div
-            className="form-control font-monospace border border-2 border-end-0"
-            data-testid="launch-url"
-          >
-            {launchUrl ||
-              "Fill in the fields to see a URL for sharing your Binder."}
-          </div>
-          <button
-            className="btn btn-outline-secondary border border-2 border-start-0"
-            type="button"
-            id="copy-url"
-            onClick={() => copy(launchUrl)}
-            disabled={launchUrl === ""}
-          >
-            <i className="bi bi-copy"></i>
-          </button>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header d-flex align-items-baseline">
-          <span className="flex-fill">Badges for your README</span>
-          <button
-            className="btn btn-link"
-            type="button"
-            aria-controls="badge-container"
-            aria-expanded={badgeVisible}
-            onClick={() => {
-              setBadgeVisible(!badgeVisible);
-            }}
-          >
-            {badgeVisible ? "hide" : "show"}
-          </button>
-        </div>
-        <div
-          className={`card-body ${badgeVisible ? "" : "d-none"}`}
-          id="badge-container"
-        >
-          <div className="d-flex align-items-baseline">
-            <div
-              className="btn-group"
-              role="group"
-              aria-label="Basic radio toggle button group"
-            >
-              <input
-                type="radio"
-                className="btn-check"
-                name="btn-badge"
-                id="btn-badge-md"
-                defaultChecked={true}
-                autoComplete="off"
-                onClick={() => setBadgeType("md")}
-              ></input>
-              <label
-                title="markdown"
-                className="btn btn-outline-secondary font-monospace"
-                htmlFor="btn-badge-md"
-              >
-                md
-              </label>
-
-              <input
-                type="radio"
-                className="btn-check"
-                name="btn-badge"
-                id="btn-badge-rst"
-                autoComplete="off"
-                onClick={() => setBadgeType("rst")}
-              ></input>
-              <label
-                title="reStructuredText"
-                className="btn btn-outline-secondary font-monospace"
-                htmlFor="btn-badge-rst"
-              >
-                rST
-              </label>
-            </div>
-            <pre className="flex-fill font-monospace px-1">
-              {badgeMarkup ||
-                "Fill in the fields to see a badge markup for your README."}
-            </pre>
-            <button
-              className="btn btn-outline-secondary"
-              type="button"
-              id="copy-url"
-              onClick={() => copy(badgeMarkup)}
-              disabled={badgeMarkup === ""}
-            >
-              <i className="bi bi-copy"></i>
-            </button>
-          </div>
-        </div>
-      </div>
     </form>
   );
 }

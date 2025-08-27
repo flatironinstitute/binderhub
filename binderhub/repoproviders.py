@@ -1294,11 +1294,11 @@ class CuratedRepoProvider(RepoProvider):
         "id": "curated",
         "spec": {"validateRegex": r"[^/]+/.+"},
         "repo": {
-            "label": "Project",
-            "placeholder": "Project name (may contain slashes)",
+            "label": "Host user",
+            "placeholder": "user",
             "urlEncode": True,
         },
-        "ref": {"enabled": True, "default": "/"},
+        "ref": {"enabled": True, "default": "project"},
     }
 
     config_path = Unicode(
