@@ -233,6 +233,7 @@ export function LinkGenerator({
         </div>
         <div className="col-2">
           <button
+            id="btn-launch"
             className="btn btn-primary col-2 w-100"
             disabled={isLaunching}
             onClick={() => setIsLaunching(true)}
