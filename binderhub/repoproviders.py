@@ -1465,6 +1465,10 @@ class CuratedRepoProvider(RepoProvider):
         users = self.params.get('users', [])
         if type(users) is str:
             users = users.split()
-        if user['name'] not in users:
+        if user['name'] in users:
+            pass
+        elif '*@flatironinstitute.org' in users and user['name'].endswith('@flatironinstitute.org'):
+            pass
+        else:
             return False
         return super().check_hub_user(user)
