@@ -30,7 +30,7 @@ jobs:
   build_images:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           # chartpress requires git history to set chart version and image tags
           # correctly
@@ -40,7 +40,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         # node required to build wheel
         with:
           node-version: "22"

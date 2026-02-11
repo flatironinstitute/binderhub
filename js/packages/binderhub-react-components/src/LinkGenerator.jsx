@@ -196,6 +196,8 @@ export function LinkGenerator({
                 const results = re.exec(repo);
                 if (results !== null && results.groups && results.groups.repo) {
                   setRepo(results.groups.repo);
+                } else {
+                  setRepo("");
                 }
               } else {
                 setRepo(e.target.value);

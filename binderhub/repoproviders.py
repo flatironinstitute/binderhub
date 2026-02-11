@@ -238,8 +238,13 @@ class FakeProvider(RepoProvider):
         "displayName": "Fake",
         "id": "fake",
         "enabled": False,
-        "spec": {"validateRegex": ".*"},
-        "repo": {"label": "Fake Repo", "placeholder": "", "urlEncode": False},
+        "spec": {"validateRegex": ".+"},
+        "detect": {"regex": "(?<repo>.+)"},
+        "repo": {
+            "label": "Fake Repo",
+            "placeholder": "example: fake",
+            "urlEncode": False,
+        },
         "ref": {
             "enabled": False,
         },
@@ -331,7 +336,7 @@ class FigshareProvider(RepoProvider):
         "ref": {"enabled": False},
     }
 
-    url_regex = re.compile(r"(.*)/articles/([^/]+)/([^/]+)/(\d+)(/)?(\d+)?")
+    url_regex = re.compile(r"(.*)/articles/([^/]+)/(\d+)(/)?(\d+)?")
 
     async def get_resolved_ref(self):
         client = AsyncHTTPClient()
@@ -339,8 +344,8 @@ class FigshareProvider(RepoProvider):
         r = await client.fetch(req)
 
         match = self.url_regex.match(r.effective_url)
-        article_id = match.groups()[3]
-        article_version = match.groups()[5]
+        article_id = match.groups()[2]
+        article_version = match.groups()[4]
         if not article_version:
             article_version = "1"
         self.record_id = f"{article_id}.v{article_version}"
@@ -518,7 +523,7 @@ class CKANProvider(RepoProvider):
         "spec": {"validateRegex": r"[^/]+"},
         "repo": {
             "label": "CKAN dataset URL",
-            "placeholder": "https://demo.ckan.org/dataset/sample-dataset-1",
+            "placeholder": "https://demo.ckan.org/dataset/my-sample-dataset-001",
             "urlEncode": True,
         },
         "ref": {"enabled": False},

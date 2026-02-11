@@ -55,7 +55,7 @@ jobs:
           #   values_path: imageCleaner.image.tag
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Get values.yaml pinned tag of ${{ matrix.registry }}/${{ matrix.repository }}
         id: local
@@ -87,7 +87,7 @@ jobs:
       # ref: https://github.com/peter-evans/create-pull-request
       - name: Create a PR
         if: github.event_name != 'pull_request'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: "${{ secrets.jupyterhub_bot_pat }}"
           author: JupterHub Bot Account <105740858+jupyterhub-bot@users.noreply.github.com>
@@ -109,7 +109,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Refreeze helm-chart/images/binderhub/requirements.txt based on requirements.in
         run: ci/refreeze
@@ -120,7 +120,7 @@ jobs:
       # ref: https://github.com/peter-evans/create-pull-request
       - name: Create a PR
         if: github.event_name != 'pull_request'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: "${{ secrets.jupyterhub_bot_pat }}"
           author: JupyterHub Bot Account <105740858+jupyterhub-bot@users.noreply.github.com>
