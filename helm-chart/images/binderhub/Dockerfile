@@ -11,10 +11,9 @@
 FROM python:3.13-bookworm as build-stage
 
 # install node as required to build a binderhub wheel
-RUN echo "deb https://deb.nodesource.com/node_18.x bullseye main" > /etc/apt/sources.list.d/nodesource.list \
- && curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 RUN apt-get update \
- && apt-get install --yes npm \
+ && apt-get install --yes nodejs \
  && rm -rf /var/lib/apt/lists/*
 
 # Build wheels
@@ -23,10 +22,12 @@ RUN apt-get update \
 # ephemeral docker cache (--mount=type=cache,target=${PIP_CACHE_DIR}). We use
 # the same technique for the directory /tmp/wheels.
 #
+WORKDIR /build
 COPY . .
 ARG PIP_CACHE_DIR=/tmp/pip-cache
 RUN --mount=type=cache,target=${PIP_CACHE_DIR} \
     pip install build \
+ && npm install js/packages/* \
  && pip wheel --wheel-dir=/tmp/wheels \
         # pycurl wheels for 7.45.3 have problems finding CAs
         # https://github.com/pycurl/pycurl/issues/834
