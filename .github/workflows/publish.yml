@@ -50,13 +50,13 @@ jobs:
           node-version: "22"
 
       - name: Set up QEMU (for docker buildx)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx (for chartpress multi-arch builds)
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Setup helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: "v3.16.2"
 
@@ -124,7 +124,7 @@ jobs:
       - name: Build a sdist, and a binary wheel from the sdist
         run: python -mbuild .
       # ref: https://github.com/actions/upload-artifact#readme
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: pypi-dist
           path: "dist/*"
