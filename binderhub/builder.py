@@ -758,7 +758,7 @@ class BuildHandler(BaseHandler):
                         'ref_url': self.ref_url,
                         'launch_host': self.binder_launch_host,
                         'request': self.binder_request,
-                        'persistent_request': self.binder_persistent_request
+                        'persistent_request': self.binder_persistent_request,
                         'client_ip': client_ip,
                     }.items():
                     extra_args['environment']['BINDER_'+k.upper()] = v
