@@ -716,6 +716,8 @@ class BuildHandler(BaseHandler):
             }
         )
 
+        client_ip = self.request.remote_ip
+
         launcher = self.settings["launcher"]
         retry_delay = launcher.retry_delay
         for i in range(launcher.retries):
@@ -757,6 +759,7 @@ class BuildHandler(BaseHandler):
                         'launch_host': self.binder_launch_host,
                         'request': self.binder_request,
                         'persistent_request': self.binder_persistent_request
+                        'client_ip': client_ip,
                     }.items():
                     extra_args['environment']['BINDER_'+k.upper()] = v
                     extra_args['extra_annotations']['binder.jupyter.org/'+k] = v

@@ -108,7 +108,13 @@ class BuildExecutor(LoggingConfigurable):
 
     memory_limit = ByteSpecification(
         0,
-        help="Memory limit for the build process in bytes (optional suffixes K M G T).",
+        help="""Memory limit for the build process in bytes (optional suffixes K M G T).
+
+            DEPRECATED: repo2docker does not support setting per-build resource limits,
+            this is typically done via `docker buildx create`.
+            or on a docker-in-docker pod.
+            Resources cannot generally be limited per-build.
+            """,
         config=True,
     )
 
@@ -161,10 +167,6 @@ class BuildExecutor(LoggingConfigurable):
 
         if self.push_secret:
             r2d_options.append("--push")
-
-        if self.memory_limit:
-            r2d_options.append("--build-memory-limit")
-            r2d_options.append(str(self.memory_limit))
 
         r2d_options += self.repo2docker_extra_args
 
@@ -315,9 +317,37 @@ class KubernetesBuildExecutor(BuildExecutor):
         config=True,
     )
 
+    resources = Dict(
+        help="""
+        Kubernetes resources for the build pod.
+        Note: This does not apply to the build itself, only the invocation of repo2docker.
+        """,
+        config=True,
+    )
+
+    @default("resources")
+    def _default_resources(self):
+        resources = {
+            "limits": {},
+            "requests": {},
+        }
+        if self.memory_limit:
+            self.log.warning(
+                "Using deprecated KubernetesBuildExecutor.memory_limit. Use KubernetesBuildExecutor.resources."
+            )
+            resources["requests"]["memory"] = self.memory_request
+            resources["limits"]["memory"] = self.memory_limit
+        if self.memory_request:
+            self.log.warning(
+                "Using deprecated KubernetesBuildExecutor.memory_request. Use KubernetesBuildExecutor.resources."
+            )
+            resources["requests"]["memory"] = self.memory_request
+        return resources
+
     memory_request = ByteSpecification(
         0,
         help=(
+            "DEPRECATED: use KubernetesBuildExecutor.resources."
             "Memory request of the build pod in bytes (optional suffixes K M G T). "
             "The actual building happens in the docker daemon, "
             "but setting request in the build pod makes sure that memory is reserved for the docker build "
@@ -524,10 +554,7 @@ class KubernetesBuildExecutor(BuildExecutor):
                         name="builder",
                         args=self.get_cmd(),
                         volume_mounts=volume_mounts,
-                        resources=client.V1ResourceRequirements(
-                            limits={"memory": self.memory_limit},
-                            requests={"memory": self.memory_request},
-                        ),
+                        resources=self.resources,
                         env=env,
                     )
                 ],
