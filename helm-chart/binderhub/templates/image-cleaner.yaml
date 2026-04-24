@@ -49,8 +49,10 @@ spec:
         volumeMounts:
         - name: storage-{{ $builderName }}
           mountPath: /var/lib/{{ $builderName }}
+          readOnly: true
         - name: socketdir-{{ $builderName }}
           mountPath: /var/run
+          readOnly: true
         env:
         {{- if .Values.imageCleaner.cordon }}
         - name: DOCKER_IMAGE_CLEANER_NODE_NAME

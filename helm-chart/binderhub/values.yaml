@@ -415,7 +415,7 @@ jupyterhub:
                 registry.register(monitor)
                 self.write(prometheus_client.generate_latest(registry))
 
-        c.JupyterHub.extra_handlers.append((r'/monitor$', MonitorHandler))
+        c.JupyterHub.extra_handlers.append((r'/monitor', MonitorHandler))
 
     services:
       binder:
