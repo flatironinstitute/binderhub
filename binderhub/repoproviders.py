@@ -1396,7 +1396,7 @@ class CuratedRepoProvider(RepoProvider):
                             if not ent.name.startswith('.') and ent.is_symlink() and ent.is_dir():
                                 targ = os.readlink(ent.path)
                                 if self.check_mount(targ, stat):
-                                    params['mounts'][ent.name] = targ
+                                    params['mounts'][targ] = targ
             elif S_ISREG(stat.st_mode):
                 # load yaml file
                 with open(path) as f:
